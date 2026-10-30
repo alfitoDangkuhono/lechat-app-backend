@@ -5,8 +5,8 @@ import (
 	"io"
 	"lechat-backend/config"
 	"lechat-backend/internal/helpers"
+	"lechat-backend/internal/observability"
 	"log"
-	"time"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -31,7 +31,7 @@ func Connect(cfg *config.Config, logWriter io.Writer) {
 	)
 
 	sqlLogger := gormlogger.New(log.New(logWriter, "", log.LstdFlags), gormlogger.Config{
-		SlowThreshold:             200 * time.Millisecond,
+		SlowThreshold:             cfg.DB_SLOW_QUERY_THRESHOLD,
 		LogLevel:                  gormlogger.Warn,
 		IgnoreRecordNotFoundError: true,
 		ParameterizedQueries:      true,
@@ -42,6 +42,10 @@ func Connect(cfg *config.Config, logWriter io.Writer) {
 	if err != nil {
 		helpers.IsPanic("connection not compatible! postgres", err)
 		log.Println("failed to connect database (postgres): ", err)
+	}
+
+	if err := observability.InstrumentGORM(DB, logWriter, cfg.DB_SLOW_QUERY_THRESHOLD); err != nil {
+		helpers.IsPanic("failed to instrument database", err)
 	}
 
 	log.Println("Connected Database!")
