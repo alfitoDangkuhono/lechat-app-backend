@@ -46,14 +46,28 @@ func main() {
 
 	// repository
 	authenticationRepository := repository.NewAuthenticationRepository(database.DB)
+	chatRepository := repository.NewChatRepository(database.DB)
+	contactRepository := repository.NewContactRepository(database.DB)
 	tokenRevocationRepository := repository.NewTokenRevocationRepository(database.DB)
 	// services
 	jwtService := services.NewJwtService(tokenRevocationRepository)
 	authenticationService := services.NewAuthenticationService(authenticationRepository)
+	chatService := services.NewChatService(chatRepository)
+	contactService := services.NewContactService(contactRepository)
 	// Controllers
 	authenticationController := controllers.NewAuthenticationController(authenticationService, jwtService)
+	chatController := controllers.NewChatController(chatService)
+	contactController := controllers.NewContactController(contactService)
+	realtimeController := controllers.NewRealtimeController(
+		chatService,
+		jwtService,
+		services.NewRealtimeHub(),
+		config.CORS_CONFIG.AllowOrigins,
+	)
 	// Routes
-	routes.Routes(router, authenticationController, jwtService)
+	routes.Routes(router, authenticationController, jwtService, chatController)
+	routes.ContactRoutes(router, jwtService, contactController)
+	routes.RealtimeRoutes(router, realtimeController)
 
 	router.Run(":" + config.APP_CONFIG.APP_PORT)
 }

@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS user_devices (
+    id SERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    device_name VARCHAR NOT NULL,
+    push_token VARCHAR NULL,
+    last_seen_at TIMESTAMPTZ NULL DEFAULT CURRENT_TIMESTAMP
+)
