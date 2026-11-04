@@ -52,6 +52,7 @@ type MessageDto struct {
 	UpdatedAt        time.Time        `json:"updated_at"`
 	DeliveredCount   int64            `json:"delivered_count"`
 	ReadCount        int64            `json:"read_count"`
+	ReceiptStatus    string           `json:"receipt_status,omitempty"`
 }
 
 type MessageReplyDto struct {
@@ -67,6 +68,7 @@ type ReadReceiptDto struct {
 	ConversationID   string `json:"conversation_id"`
 	ThroughMessageID string `json:"through_message_id"`
 	MarkedCount      int64  `json:"marked_count"`
+	SenderIDs        []uint `json:"-"`
 }
 
 type MembershipDto struct {

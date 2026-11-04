@@ -17,7 +17,7 @@ type ChatRepository struct {
 	db *gorm.DB
 }
 
-func messageDTOQuery(db *gorm.DB) *gorm.DB {
+func messageDTOQuery(db *gorm.DB, receiptUserID uint) *gorm.DB {
 	return db.Table("messages").
 		Select(`
 			messages.id, messages.conversation_id, messages.sender_id, messages.client_message_id,
@@ -29,8 +29,26 @@ func messageDTOQuery(db *gorm.DB) *gorm.DB {
 			reply.type AS reply_to_type,
 			(reply.deleted_at IS NOT NULL) AS reply_to_is_deleted,
 			(SELECT COUNT(*) FROM messages_receipts WHERE message_id = messages.id AND delivered_at IS NOT NULL) AS delivered_count,
-			(SELECT COUNT(*) FROM messages_receipts WHERE message_id = messages.id AND read_at IS NOT NULL) AS read_count
-		`).
+			(SELECT COUNT(*) FROM messages_receipts WHERE message_id = messages.id AND read_at IS NOT NULL) AS read_count,
+			CASE WHEN messages.sender_id = ? THEN
+				CASE
+					WHEN EXISTS (
+						SELECT 1 FROM messages_receipts
+						WHERE message_id = messages.id
+						  AND user_id <> messages.sender_id
+						  AND read_at IS NOT NULL
+					) THEN 'read'
+					WHEN EXISTS (
+						SELECT 1 FROM messages_receipts
+						WHERE message_id = messages.id
+						  AND user_id <> messages.sender_id
+						  AND delivered_at IS NOT NULL
+					) THEN 'delivered'
+					ELSE 'sent'
+				END
+				ELSE ''
+			END AS receipt_status
+		`, receiptUserID).
 		Joins("LEFT JOIN messages AS reply ON reply.id = messages.reply_to_message_id").
 		Joins("LEFT JOIN users AS reply_sender ON reply_sender.id = reply.sender_id")
 }
@@ -279,7 +297,7 @@ func (r *ChatRepository) ListMessages(userID uint, conversationID, beforeID stri
 		return nil, err
 	}
 
-	query := messageDTOQuery(r.db).
+	query := messageDTOQuery(r.db, userID).
 		Where("messages.conversation_id = ?", conversationID).
 		Order("messages.created_at DESC, messages.id DESC").
 		Limit(limit)
@@ -341,7 +359,7 @@ func (r *ChatRepository) SendMessage(userID uint, conversationID string, req req
 	}
 	if err := r.db.Table("messages").Create(&message).Error; err != nil {
 		var existing dto.MessageDto
-		findErr := messageDTOQuery(r.db).
+		findErr := messageDTOQuery(r.db, userID).
 			Where("messages.sender_id = ? AND messages.client_message_id = ?", userID, req.ClientMessageID).
 			Take(&existing).Error
 		if findErr == nil {
@@ -356,7 +374,7 @@ func (r *ChatRepository) SendMessage(userID uint, conversationID string, req req
 	}
 
 	var created dto.MessageDto
-	if err := messageDTOQuery(r.db).Where("messages.id = ?", message.ID).Take(&created).Error; err != nil {
+	if err := messageDTOQuery(r.db, userID).Where("messages.id = ?", message.ID).Take(&created).Error; err != nil {
 		return dto.MessageDto{}, err
 	}
 	setMessageReply(&created)
@@ -389,6 +407,20 @@ func (r *ChatRepository) MarkRead(userID uint, conversationID string, req reques
 		return dto.ReadReceiptDto{}, gorm.ErrRecordNotFound
 	}
 
+	var senderIDs []uint
+	if err := r.db.Raw(`
+		SELECT DISTINCT sender_id
+		FROM messages
+		WHERE conversation_id = ?
+		  AND sender_id <> ?
+		  AND deleted_at IS NULL
+		  AND (created_at, id) <= (
+			SELECT created_at, id FROM messages WHERE id = ? AND conversation_id = ?
+		  )
+	`, conversationID, userID, req.ThroughMessageID, conversationID).Scan(&senderIDs).Error; err != nil {
+		return dto.ReadReceiptDto{}, err
+	}
+
 	result := r.db.Exec(`
 		INSERT INTO messages_receipts (message_id, user_id, delivered_at, read_at)
 		SELECT id, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
@@ -412,6 +444,7 @@ func (r *ChatRepository) MarkRead(userID uint, conversationID string, req reques
 		ConversationID:   conversationID,
 		ThroughMessageID: req.ThroughMessageID,
 		MarkedCount:      result.RowsAffected,
+		SenderIDs:        senderIDs,
 	}, nil
 }
 
@@ -475,7 +508,7 @@ func (r *ChatRepository) EditMessage(userID uint, messageID string, req request.
 	}
 
 	var message dto.MessageDto
-	err := messageDTOQuery(r.db).Where("messages.id = ?", messageID).Take(&message).Error
+	err := messageDTOQuery(r.db, userID).Where("messages.id = ?", messageID).Take(&message).Error
 	setMessageReply(&message)
 	return message, err
 }
@@ -498,7 +531,7 @@ func (r *ChatRepository) DeleteMessage(userID uint, messageID string) (dto.Messa
 	}
 
 	var message dto.MessageDto
-	err := messageDTOQuery(r.db).Where("messages.id = ?", messageID).Take(&message).Error
+	err := messageDTOQuery(r.db, userID).Where("messages.id = ?", messageID).Take(&message).Error
 	setMessageReply(&message)
 	return message, err
 }

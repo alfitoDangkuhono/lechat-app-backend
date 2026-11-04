@@ -188,6 +188,16 @@ func (c *ChatController) MarkRead(ctx *gin.Context) {
 		writeChatServiceError(ctx, err)
 		return
 	}
+	if err := c.hub.BroadcastUsers(result.SenderIDs, realtimeEvent{
+		Type:           "receipt.read",
+		ConversationID: conversationID,
+		Data: gin.H{
+			"through_message_id": result.ThroughMessageID,
+		},
+	}); err != nil {
+		writeChatServiceError(ctx, err)
+		return
+	}
 	utils.SuccessResponse(ctx, http.StatusOK, result)
 }
 

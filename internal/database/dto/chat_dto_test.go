@@ -48,3 +48,21 @@ func TestMessageDtoMarshalsReplySummary(t *testing.T) {
 		t.Fatal("internal reply summary fields must not be serialized")
 	}
 }
+
+func TestMessageDtoMarshalsReceiptStatus(t *testing.T) {
+	message, err := json.Marshal(MessageDto{
+		ID:            "123e4567-e89b-12d3-a456-426614174004",
+		ReceiptStatus: "read",
+	})
+	if err != nil {
+		t.Fatalf("marshal message DTO: %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(message, &result); err != nil {
+		t.Fatalf("unmarshal message DTO: %v", err)
+	}
+	if result["receipt_status"] != "read" {
+		t.Fatalf("receipt_status = %v, want read", result["receipt_status"])
+	}
+}

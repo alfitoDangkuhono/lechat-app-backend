@@ -480,6 +480,8 @@ Setelah klien menerima pesan, kirim `receipt.delivered` dengan `conversation_id`
 
 Kedua cara menandai pesan sampai cursor, bukan satu pesan saja. Jangan mengirim receipt untuk pesan yang dikirim pengguna sendiri; backend mencatat receipt untuk pesan dari pengguna lain.
 
+Saat server menerima `receipt.read`, server mengirim event itu ke koneksi online milik pengirim pesan yang tercakup cursor, sekalipun pengirim tidak join ke room. Payload event berisi `conversation_id` dan `data.through_message_id`; gunakan cursor untuk menandai pesan keluar sampai pesan tersebut sebagai sudah dibaca. History juga mengembalikan `receipt_status` untuk pesan keluar (`sent`, `delivered`, atau `read`), agar centang tetap benar setelah reload. Pesan masuk tidak memiliki `receipt_status`.
+
 ### Contacts
 
 - `GET /contacts` mengambil kontak accepted.
