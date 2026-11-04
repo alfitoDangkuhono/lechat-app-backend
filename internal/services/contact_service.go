@@ -1,0 +1,59 @@
+package services
+
+import (
+	"math"
+
+	"lechat-backend/internal/constant"
+	"lechat-backend/internal/database/dto"
+	"lechat-backend/internal/interfaces"
+	"lechat-backend/internal/repository"
+)
+
+type ContactService struct {
+	contactRepository *repository.ContactRepository
+}
+
+func NewContactService(contactRepository *repository.ContactRepository) interfaces.IContacts {
+	return &ContactService{contactRepository: contactRepository}
+}
+
+func (s *ContactService) RequestContact(userID, targetID uint) (string, error) {
+	if !validContactPair(userID, targetID) {
+		return "", constant.ErrChatInvalidRequest
+	}
+	return s.contactRepository.RequestContact(userID, targetID)
+}
+
+func (s *ContactService) AcceptContact(userID, targetID uint) error {
+	if !validContactPair(userID, targetID) {
+		return constant.ErrChatInvalidRequest
+	}
+	return s.contactRepository.AcceptContact(userID, targetID)
+}
+
+func (s *ContactService) RejectContact(userID, targetID uint) error {
+	if !validContactPair(userID, targetID) {
+		return constant.ErrChatInvalidRequest
+	}
+	return s.contactRepository.RejectContact(userID, targetID)
+}
+
+func (s *ContactService) RemoveContact(userID, targetID uint) error {
+	if !validContactPair(userID, targetID) {
+		return constant.ErrChatInvalidRequest
+	}
+	return s.contactRepository.RemoveContact(userID, targetID)
+}
+
+func (s *ContactService) ListContacts(userID uint) ([]dto.ContactDto, error) {
+	return s.contactRepository.ListContacts(userID)
+}
+
+func (s *ContactService) ListContactRequests(userID uint) ([]dto.ContactDto, error) {
+	return s.contactRepository.ListContactRequests(userID)
+}
+
+func validContactPair(userID, targetID uint) bool {
+	return userID > 0 && targetID > 0 && userID != targetID &&
+		uint64(userID) <= math.MaxInt64 && uint64(targetID) <= math.MaxInt64
+}
