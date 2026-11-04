@@ -9,15 +9,16 @@ import (
 )
 
 type Config struct {
-	DB_HOST         string
-	DB_PORT         string
-	DB_PASSWORD     string
-	DB_USER         string
-	DB_NAME         string
-	SSL_MODE        string
-	APP_CONFIG      AppConfig
-	CORS_CONFIG     CORSConfig
-	SECURITY_CONFIG ConfigSecurity
+	DB_HOST                 string
+	DB_PORT                 string
+	DB_PASSWORD             string
+	DB_USER                 string
+	DB_NAME                 string
+	SSL_MODE                string
+	DB_SLOW_QUERY_THRESHOLD time.Duration
+	APP_CONFIG              AppConfig
+	CORS_CONFIG             CORSConfig
+	SECURITY_CONFIG         ConfigSecurity
 }
 type AppConfig struct {
 	APP_PORT string
@@ -49,12 +50,13 @@ func LoadConfig() *Config {
 	}
 
 	return &Config{
-		DB_HOST:     utils.GetEnv("DATABASE_HOST", "127.0.0.1"),
-		DB_PORT:     utils.GetEnv("DATABASE_PORT", "5432"),
-		DB_PASSWORD: utils.GetEnv("DATABASE_PASSWORD", ""),
-		DB_USER:     utils.GetEnv("DATABASE_USER", "postgres"),
-		DB_NAME:     utils.GetEnv("DATABASE_NAME", ""),
-		SSL_MODE:    utils.GetEnv("SSL_MODE", "disable"),
+		DB_HOST:                 utils.GetEnv("DATABASE_HOST", "127.0.0.1"),
+		DB_PORT:                 utils.GetEnv("DATABASE_PORT", "5432"),
+		DB_PASSWORD:             utils.GetEnv("DATABASE_PASSWORD", ""),
+		DB_USER:                 utils.GetEnv("DATABASE_USER", "postgres"),
+		DB_NAME:                 utils.GetEnv("DATABASE_NAME", ""),
+		SSL_MODE:                utils.GetEnv("SSL_MODE", "disable"),
+		DB_SLOW_QUERY_THRESHOLD: utils.GetEnvAsDuration("DB_SLOW_QUERY_THRESHOLD", 200*time.Millisecond),
 		APP_CONFIG: AppConfig{
 			APP_PORT: utils.GetEnv("APP_PORT", "8989"),
 		},

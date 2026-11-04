@@ -1,14 +1,20 @@
 package main
 
 import (
+	"context"
 	"lechat-backend/config"
 	"lechat-backend/internal/api/controllers"
 	"lechat-backend/internal/api/routes"
 	"lechat-backend/internal/database"
 	"lechat-backend/internal/helpers"
+	"lechat-backend/internal/observability"
 	"lechat-backend/internal/repository"
 	"lechat-backend/internal/services"
 	"lechat-backend/utils"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -23,8 +29,26 @@ func main() {
 	}
 
 	appLogger := utils.NewLogger()
-	router := gin.Default()
 	config := config.LoadConfig()
+	shutdownTelemetry, err := observability.Init(context.Background())
+	if err != nil {
+		helpers.IsPanic("failed to initialize OpenTelemetry", err)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTelemetry(ctx); err != nil {
+			appLogger.Error(err)
+		}
+	}()
+
+	requestMetrics, err := observability.GinMetrics()
+	if err != nil {
+		helpers.IsPanic("failed to initialize HTTP metrics", err)
+	}
+
+	router := gin.New()
+	router.Use(gin.Logger(), observability.GinTracing(), requestMetrics, gin.Recovery())
 	router.SetTrustedProxies([]string{"100.91.195.119"})
 	router.Use(cors.New(cors.Config{
 		AllowOrigins:     config.CORS_CONFIG.AllowOrigins,
@@ -69,5 +93,28 @@ func main() {
 	routes.ContactRoutes(router, jwtService, contactController)
 	routes.RealtimeRoutes(router, realtimeController)
 
-	router.Run(":" + config.APP_CONFIG.APP_PORT)
+	server := &http.Server{
+		Addr:    ":" + config.APP_CONFIG.APP_PORT,
+		Handler: router,
+	}
+	serverErrors := make(chan error, 1)
+	go func() {
+		serverErrors <- server.ListenAndServe()
+	}()
+
+	stop, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	select {
+	case <-stop.Done():
+	case err := <-serverErrors:
+		if err != nil && err != http.ErrServerClosed {
+			appLogger.Error(err)
+		}
+	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		appLogger.Error(err)
+	}
 }

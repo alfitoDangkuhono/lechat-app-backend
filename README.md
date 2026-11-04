@@ -32,9 +32,21 @@ CORS_ALLOW_HEADERS=Origin,Content-Type,Accept,Authorization
 CORS_EXPOSE_HEADERS=Content-Length
 CORS_ALLOW_CREDENTIALS=true
 CORS_MAX_AGE=12h
+
+OTEL_SERVICE_NAME=lechat-backend
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+DB_SLOW_QUERY_THRESHOLD=200ms
 ```
 
 `EXPIRE_TOKEN` adalah masa berlaku access token dalam detik, sedangkan `EXPIRE_REFRESH_TOKEN` dalam jam. Atur secret JWT yang unik dan kuat di environment; jangan gunakan default untuk deployment.
+
+## OpenTelemetry
+
+Aplikasi mengirim traces dan metrics menggunakan OTLP over HTTP. Jalankan OpenTelemetry Collector atau backend yang menerima OTLP pada endpoint yang dikonfigurasi. `OTEL_EXPORTER_OTLP_ENDPOINT` default ke `http://localhost:4318`; `OTEL_SERVICE_NAME` default ke `lechat-backend`. Ikuti format OTLP HTTP exporter untuk konfigurasi autentikasi/headers bila diperlukan. Jika Collector tidak tersedia, telemetry tidak akan tersimpan dan exporter dapat mencatat error.
+
+Instrumentasi mencakup trace request Gin dan operasi GORM (query, create, update, delete, row, dan raw), metrik jumlah/durasi/status HTTP, durasi/jumlah/error operasi database, slow query, serta penggunaan dan waktu tunggu connection pool. Atribut metrik menggunakan route, jenis operasi, dan tabel; SQL beserta nilai parameter tidak ditambahkan ke span atau metrik.
+
+`DB_SLOW_QUERY_THRESHOLD` mengatur ambang slow query untuk log GORM dan metrik OpenTelemetry, dengan default `200ms`. Setel sebagai durasi Go, misalnya `500ms` atau `1s`.
 
 ## Database
 
