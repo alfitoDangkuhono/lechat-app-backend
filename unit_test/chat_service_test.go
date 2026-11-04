@@ -15,6 +15,7 @@ func TestCreateConversationRejectsInvalidParticipants(t *testing.T) {
 		{Type: "direct", MemberIDs: nil},
 		{Type: "direct", MemberIDs: []uint{1}},
 		{Type: "group", MemberIDs: nil},
+		{Type: "group", MemberIDs: []uint{1, 2}},
 	}
 
 	for _, req := range tests {
@@ -35,6 +36,14 @@ func TestChatServiceValidatesMessageAndPageBounds(t *testing.T) {
 	}
 	if _, err := service.SendMessage(1, "conversation", request.SendMessageRequest{Type: "text"}); err != constant.ErrChatInvalidRequest {
 		t.Errorf("SendMessage with empty text error = %v, want %v", err, constant.ErrChatInvalidRequest)
+	}
+	invalidReplyID := "not-a-uuid"
+	if _, err := service.SendMessage(1, "conversation", request.SendMessageRequest{
+		Type:             "text",
+		Body:             "reply",
+		ReplyToMessageID: &invalidReplyID,
+	}); err != constant.ErrChatInvalidReply {
+		t.Errorf("SendMessage with invalid reply ID error = %v, want %v", err, constant.ErrChatInvalidReply)
 	}
 	if _, err := service.InviteGroupMember(1, "conversation", request.InviteGroupMemberRequest{}); err != constant.ErrChatInvalidRequest {
 		t.Errorf("InviteGroupMember with zero user ID error = %v, want %v", err, constant.ErrChatInvalidRequest)

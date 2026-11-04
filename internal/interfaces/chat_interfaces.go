@@ -6,8 +6,9 @@ import (
 )
 
 type IChat interface {
-	CreateConversation(userID uint, req request.CreateConversationRequest) (string, error)
+	CreateConversation(userID uint, req request.CreateConversationRequest) (dto.ConversationCreationDto, error)
 	ListConversations(userID uint) ([]dto.ConversationDto, error)
+	ListGroupMembers(userID uint, conversationID string) ([]dto.ConversationMemberDto, error)
 	ListMessages(userID uint, conversationID, beforeID string, limit int) ([]dto.MessageDto, error)
 	SendMessage(userID uint, conversationID string, req request.SendMessageRequest) (dto.MessageDto, error)
 	MarkDelivered(userID uint, conversationID string, req request.MarkReadRequest) (dto.ReadReceiptDto, error)

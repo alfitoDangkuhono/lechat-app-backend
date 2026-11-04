@@ -11,6 +11,7 @@ import (
 	"lechat-backend/internal/database/models"
 	"lechat-backend/internal/interfaces"
 	"lechat-backend/internal/request"
+	"lechat-backend/internal/services"
 	"lechat-backend/utils"
 
 	"github.com/gin-gonic/gin"
@@ -21,10 +22,11 @@ var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
 
 type ChatController struct {
 	chat interfaces.IChat
+	hub  *services.RealtimeHub
 }
 
-func NewChatController(chat interfaces.IChat) *ChatController {
-	return &ChatController{chat: chat}
+func NewChatController(chat interfaces.IChat, hub *services.RealtimeHub) *ChatController {
+	return &ChatController{chat: chat, hub: hub}
 }
 
 func (c *ChatController) CreateConversation(ctx *gin.Context) {
@@ -39,12 +41,15 @@ func (c *ChatController) CreateConversation(ctx *gin.Context) {
 		writeChatError(ctx, http.StatusBadRequest, constant.ErrChatInvalidRequest)
 		return
 	}
-	conversationID, err := c.chat.CreateConversation(claims.UserId, req)
+	conversation, err := c.chat.CreateConversation(claims.UserId, req)
 	if err != nil {
 		writeChatServiceError(ctx, err)
 		return
 	}
-	utils.SuccessResponse(ctx, http.StatusCreated, gin.H{"id": conversationID})
+	utils.SuccessResponse(ctx, http.StatusCreated, gin.H{
+		"id":           conversation.ID,
+		"conversation": conversation,
+	})
 }
 
 func (c *ChatController) ListConversations(ctx *gin.Context) {
@@ -59,6 +64,26 @@ func (c *ChatController) ListConversations(ctx *gin.Context) {
 		return
 	}
 	utils.SuccessResponse(ctx, http.StatusOK, conversations)
+}
+
+func (c *ChatController) ListGroupMembers(ctx *gin.Context) {
+	claims, ok := authenticatedClaims(ctx)
+	if !ok {
+		writeChatError(ctx, http.StatusUnauthorized, constant.ErrInvalidToken)
+		return
+	}
+	conversationID := ctx.Param("conversation_id")
+	if !uuidPattern.MatchString(conversationID) {
+		writeChatError(ctx, http.StatusBadRequest, constant.ErrChatInvalidRequest)
+		return
+	}
+
+	members, err := c.chat.ListGroupMembers(claims.UserId, conversationID)
+	if err != nil {
+		writeChatServiceError(ctx, err)
+		return
+	}
+	utils.SuccessResponse(ctx, http.StatusOK, members)
 }
 
 func (c *ChatController) ListMessages(ctx *gin.Context) {
@@ -122,6 +147,19 @@ func (c *ChatController) SendMessage(ctx *gin.Context) {
 	}
 	message, err := c.chat.SendMessage(claims.UserId, conversationID, req)
 	if err != nil {
+		writeChatServiceError(ctx, err)
+		return
+	}
+	memberIDs, err := c.chat.ActiveMemberIDs(conversationID)
+	if err != nil {
+		writeChatServiceError(ctx, err)
+		return
+	}
+	if err := c.hub.BroadcastUsers(memberIDs, realtimeEvent{
+		Type:           "message.created",
+		ConversationID: conversationID,
+		Data:           message,
+	}); err != nil {
 		writeChatServiceError(ctx, err)
 		return
 	}
@@ -315,6 +353,8 @@ func writeChatServiceError(ctx *gin.Context, err error) {
 	switch {
 	case errors.Is(err, constant.ErrChatInvalidRequest):
 		writeChatError(ctx, http.StatusBadRequest, err)
+	case errors.Is(err, constant.ErrChatInvalidReply):
+		writeChatError(ctx, http.StatusUnprocessableEntity, err)
 	case errors.Is(err, constant.ErrChatForbidden):
 		writeChatError(ctx, http.StatusForbidden, err)
 	case errors.Is(err, constant.ErrChatNotContact):

@@ -129,6 +129,31 @@ func (h *RealtimeHub) Broadcast(conversationID string, allowedUserIDs []uint, ev
 	return nil
 }
 
+func (h *RealtimeHub) BroadcastUsers(allowedUserIDs []uint, event interface{}) error {
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("marshal realtime event: %w", err)
+	}
+	allowed := make(map[uint]struct{}, len(allowedUserIDs))
+	for _, userID := range allowedUserIDs {
+		allowed[userID] = struct{}{}
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for client := range h.clients {
+		if _, ok := allowed[client.userID]; !ok {
+			continue
+		}
+		select {
+		case <-client.done:
+		case client.send <- payload:
+		default:
+			client.stop()
+		}
+	}
+	return nil
+}
+
 func (c *RealtimeClient) SendQueue() <-chan []byte {
 	return c.send
 }

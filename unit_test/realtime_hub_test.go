@@ -38,3 +38,43 @@ func TestRealtimeHubBroadcastsOnlyToActiveSubscribers(t *testing.T) {
 	hub.Unregister(first)
 	hub.Unregister(second)
 }
+
+func TestRealtimeHubBroadcastsToAllConnectionsOfAllowedUsers(t *testing.T) {
+	hub := services.NewRealtimeHub()
+	conversationSubscriber := hub.Register(1)
+	otherConnection := hub.Register(1)
+	unrelatedUser := hub.Register(2)
+	hub.Join(conversationSubscriber, "conversation")
+
+	if err := hub.BroadcastUsers([]uint{1}, map[string]string{"type": "message.created"}); err != nil {
+		t.Fatalf("broadcast to users: %v", err)
+	}
+
+	for name, client := range map[string]*services.RealtimeClient{
+		"joined connection":     conversationSubscriber,
+		"other user connection": otherConnection,
+	} {
+		select {
+		case payload := <-client.SendQueue():
+			var event map[string]string
+			if err := json.Unmarshal(payload, &event); err != nil {
+				t.Fatalf("unmarshal %s event: %v", name, err)
+			}
+			if event["type"] != "message.created" {
+				t.Fatalf("%s event type = %q, want message.created", name, event["type"])
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("%s did not receive event", name)
+		}
+	}
+
+	select {
+	case <-unrelatedUser.SendQueue():
+		t.Fatal("unrelated user received event")
+	default:
+	}
+
+	hub.Unregister(conversationSubscriber)
+	hub.Unregister(otherConnection)
+	hub.Unregister(unrelatedUser)
+}

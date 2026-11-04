@@ -78,14 +78,15 @@ func main() {
 	authenticationService := services.NewAuthenticationService(authenticationRepository)
 	chatService := services.NewChatService(chatRepository)
 	contactService := services.NewContactService(contactRepository)
+	realtimeHub := services.NewRealtimeHub()
 	// Controllers
 	authenticationController := controllers.NewAuthenticationController(authenticationService, jwtService)
-	chatController := controllers.NewChatController(chatService)
+	chatController := controllers.NewChatController(chatService, realtimeHub)
 	contactController := controllers.NewContactController(contactService)
 	realtimeController := controllers.NewRealtimeController(
 		chatService,
 		jwtService,
-		services.NewRealtimeHub(),
+		realtimeHub,
 		config.CORS_CONFIG.AllowOrigins,
 	)
 	// Routes

@@ -124,6 +124,7 @@ All endpoints in this section require an access token. UUID path values and mess
 |---|---|---|---|
 | `POST` | `/conversations` | — | Create a direct or group conversation |
 | `GET` | `/conversations` | — | List active conversations |
+| `GET` | `/conversations/{conversation_id}/members` | — | List active members of a group |
 | `GET` | `/conversations/{conversation_id}/messages` | `limit`, `before_id` | Get a message page |
 | `POST` | `/conversations/{conversation_id}/messages` | — | Send a message |
 | `POST` | `/conversations/{conversation_id}/delivered` | — | Mark messages delivered through a cursor |
@@ -144,10 +145,26 @@ All endpoints in this section require an access token. UUID path values and mess
 ```
 
 - `type` is `direct` or `group`; `member_ids` is required and must contain at least one other user ID.
-- The authenticated user is added automatically. Repeated IDs, including the caller's ID, are deduplicated.
+- The authenticated user is added automatically. Repeated IDs are deduplicated; group `member_ids` must not include the caller.
 - A direct conversation must contain exactly one other user and requires an accepted contact relationship. Creating it again reuses the existing direct conversation.
-- A group requires at least one other user. `title` is optional.
-- Success is `201 Created`, with `data.id` containing the conversation UUID.
+- A group requires at least one other user, and every requested member must be an accepted contact of the caller. Pending requests are not sufficient. `title` is optional; an omitted or empty title defaults to `Grup baru`.
+- Success is `201 Created`, with the conversation in `data.conversation` (`id`, `type`, `title`, and `member_count`). `data.id` is also included for compatibility.
+
+```json
+{
+  "code": 201,
+  "message": "success",
+  "data": {
+    "id": "123e4567-e89b-12d3-a456-426614174000",
+    "conversation": {
+      "id": "123e4567-e89b-12d3-a456-426614174000",
+      "type": "group",
+      "title": "Tim Produk",
+      "member_count": 3
+    }
+  }
+}
+```
 
 ### List conversations
 
@@ -175,6 +192,15 @@ Response `data`:
       "client_message_id": "123e4567-e89b-12d3-a456-426614174002",
       "type": "text",
       "body": "Hello",
+      "reply_to_message_id": "123e4567-e89b-12d3-a456-426614174003",
+      "reply_to": {
+        "id": "123e4567-e89b-12d3-a456-426614174003",
+        "sender_id": 19,
+        "username": "andi",
+        "body": "Let's start at 3?",
+        "type": "text",
+        "is_deleted": false
+      },
       "edited_at": null,
       "deleted_at": null,
       "created_at": "2026-11-03T07:00:00Z",
@@ -197,11 +223,14 @@ Use `next_before_id` as the next request's `before_id`. It is an empty string wh
 {
   "client_message_id": "123e4567-e89b-12d3-a456-426614174002",
   "type": "text",
-  "body": "Hello"
+  "body": "Hello",
+  "reply_to_message_id": "123e4567-e89b-12d3-a456-426614174003"
 }
 ```
 
 `client_message_id` is a required UUID idempotency key. Reuse it for retries of the same message. Reusing the key with different content returns `409`. Although the request schema recognizes `text`, `image`, `video`, and `file`, currently only non-empty `text` messages are implemented; other types are rejected. Media upload/storage is not implemented.
+
+`reply_to_message_id` is optional (omit it or send `null` for a normal message). If provided, it must identify a message in the same conversation; otherwise the API returns `422 Unprocessable Entity`. The response, conversation history, and `message.created` event include a `reply_to` summary with the original message ID, sender ID, username, body, type, and `is_deleted`. A deleted original message remains available as a tombstone with an empty body and `is_deleted: true`.
 
 Success is `201 Created`, with the created message object in `data`.
 
@@ -233,6 +262,7 @@ The body must not be empty. Only the original sender can edit or delete a messag
 
 | Method | Path | Description |
 |---|---|---|
+| `GET` | `/conversations/{conversation_id}/members` | List active members of a group |
 | `POST` | `/conversations/{conversation_id}/invitations` | Invite a contact to a group |
 | `GET` | `/group-invitations` | List pending invitations for the caller |
 | `POST` | `/group-invitations/{invitation_id}/accept` | Accept an invitation |
@@ -250,6 +280,30 @@ Invite request:
 Only group owners and admins can invite. The invitee must be an accepted contact of the inviter. Only the invitee can accept or decline; accepting adds them to the group. A pending duplicate invitation returns `409`.
 
 Members may leave themselves using their own `member_id`. Owners/admins may remove members subject to role restrictions; an owner cannot leave or be removed because ownership transfer is not available. Successful membership responses include `conversation_id`, `user_id`, and `status`.
+
+### List group members
+
+`GET /conversations/{conversation_id}/members` requires an access token and an active membership in the group. It returns active members only; members who have left are excluded. A direct conversation ID is rejected.
+
+Success is `200 OK`, with member objects in `data`:
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": [
+    {
+      "user_id": 24,
+      "username": "nadia",
+      "first_name": "Nadia",
+      "last_name": "Putri",
+      "role": "member"
+    }
+  ]
+}
+```
+
+The caller receives `403 Forbidden` if they are not an active member of the group.
 
 ## WebSocket realtime
 
@@ -283,7 +337,8 @@ Send message:
   "conversation_id": "123e4567-e89b-12d3-a456-426614174000",
   "client_message_id": "123e4567-e89b-12d3-a456-426614174002",
   "message_type": "text",
-  "body": "Hello"
+  "body": "Hello",
+  "reply_to_message_id": "123e4567-e89b-12d3-a456-426614174003"
 }
 ```
 
@@ -298,11 +353,11 @@ Events are JSON objects with `type`, optional `conversation_id`, and optional `d
 | `auth.ok` | Authentication succeeded; `data.user_id` identifies the caller |
 | `conversation.history` | History page; `data` includes `items`, `next_before_id`, and `joined` |
 | `conversation.left` | Caller left the conversation room |
-| `message.created` | A message was persisted and broadcast |
+| `message.created` | A message was persisted and sent to all online WebSocket connections of active conversation members, whether or not each connection joined the room |
 | `message.updated` | A message was edited |
 | `message.deleted` | A message was soft-deleted |
 | `receipt.delivered` | Delivery receipt update |
 | `receipt.read` | Read receipt update |
 | `error` | Request failed; `error` contains a message |
 
-Broadcasts go only to connected clients subscribed to the conversation who are still active members. REST and WebSocket use the same service validation and persistence logic.
+`message.created` is sent to every connected socket for active members of the conversation, including sockets not joined to that room. Other room broadcasts (message edits/deletes and receipts) are still sent only to joined subscribers who remain active members. Messages sent through REST also emit `message.created`. These are online WebSocket events, not browser/OS push notifications; offline delivery requires a separate push notification service.
