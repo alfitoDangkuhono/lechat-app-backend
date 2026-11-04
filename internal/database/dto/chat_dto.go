@@ -6,7 +6,7 @@ type ConversationDto struct {
 	ID                 string                  `json:"id"`
 	Type               string                  `json:"type"`
 	Title              *string                 `json:"title"`
-	Members            []ConversationMemberDto `json:"members"`
+	Members            []ConversationMemberDto `json:"members" gorm:"-"`
 	CreatedAt          time.Time               `json:"created_at"`
 	UpdatedAt          time.Time               `json:"updated_at"`
 	LastMessageID      *string                 `json:"last_message_id"`

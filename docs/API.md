@@ -78,20 +78,41 @@ Authorization: Bearer <refresh-token>
 
 Register, login, and refresh return `data.token` and `data.refresh_token`.
 
+### Profile — `GET /profile`
+
+Send the access token in the `Authorization` header. The profile belongs to the authenticated user and includes `username`:
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "id": 42,
+    "username": "jane",
+    "email": "jane@example.com",
+    "first_name": "Jane",
+    "last_name": "Doe",
+    "phone": "08123456789",
+    "created_at": "2026-11-03T10:00:00Z",
+    "updated_at": "2026-11-03T10:00:00Z"
+  }
+}
+```
+
 ## Contacts
 
-All contact endpoints require an access token. User IDs are positive integers. Direct conversations are available only while both participants have an accepted contact relationship.
+All contact endpoints require an access token. Contact requests are sent by the target user's exact phone number. Accept, reject, and remove operations use positive user IDs. Direct conversations are available only while both participants have an accepted contact relationship.
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/contacts` | List accepted contacts |
 | `GET` | `/contacts/requests` | List pending incoming and outgoing requests |
-| `POST` | `/contacts/{user_id}/requests` | Send a contact request |
+| `POST` | `/contacts/requests` | Send a contact request using `{"phone":"..."}` |
 | `POST` | `/contacts/{user_id}/accept` | Accept a request from that user |
 | `DELETE` | `/contacts/{user_id}/requests` | Reject an incoming request from that user |
 | `DELETE` | `/contacts/{user_id}` | Remove an accepted contact |
 
-The request, accept, reject, and remove endpoints do not require a JSON body. A successful mutation returns `data` with `user_id` and `status` (`pending`, `accepted`, `rejected`, or `removed`). If both users send requests to each other, the relationship is automatically accepted. Sending a duplicate pending request returns `409`.
+The accept, reject, and remove endpoints do not require a JSON body. A successful mutation returns `data` with `user_id` and `status` (`pending`, `accepted`, `rejected`, or `removed`). If both users send requests to each other, the relationship is automatically accepted. Sending a duplicate pending request returns `409`. A phone number that matches no account returns `404`; duplicate phone numbers return `409` to avoid sending a request to the wrong account.
 
 `GET /contacts/requests` includes `direction` (`incoming` or `outgoing`) for each pending item. Accepted contact objects include `accepted_at`.
 
@@ -232,7 +253,7 @@ Members may leave themselves using their own `member_id`. Owners/admins may remo
 
 ## WebSocket realtime
 
-Connect to `ws://<host>/api/v1/ws` or `wss://<host>/api/v1/ws` under TLS. Authenticate using either the `Authorization: Bearer <access-token>` handshake header or, for browser clients, send this as the first frame after connecting:
+Connect to `ws://<host>/api/v1/ws` or `wss://<host>/api/v1/ws` under TLS. Authenticate using either the `Authorization` handshake header with a Bearer access token or, for browser clients, send this as the first frame after connecting:
 
 ```json
 {"type":"auth","token":"<access-token>"}

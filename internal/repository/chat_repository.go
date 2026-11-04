@@ -37,9 +37,9 @@ func (r *ChatRepository) CreateConversation(userID uint, req request.CreateConve
 			var lockAcquired bool
 			if err := tx.Raw(`
 				SELECT pg_advisory_xact_lock(
-					hashtextextended(CONCAT(?::text, ':', ?::text), 0)
+					hashtextextended(CONCAT(?::bigint::text, ':', ?::bigint::text), 0)
 				) IS NULL
-			`, low, high).Scan(&lockAcquired).Error; err != nil {
+			`, int64(low), int64(high)).Scan(&lockAcquired).Error; err != nil {
 				return err
 			}
 			var areContacts bool

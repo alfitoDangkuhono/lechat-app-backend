@@ -72,13 +72,13 @@ Aplikasi belum menjalankan migrasi database secara otomatis.
 
 ### Chat API
 
-Dokumentasi API lengkap (payload, query, respons, error, dan event WebSocket) tersedia di [docs/API.md](./docs/API.md).
+Dokumentasi API lengkap (payload, query, respons, error, dan event WebSocket) tersedia di [docs/API.md](./docs/API.md). Panduan integrasi frontend React ada di [docs/REACT_INTEGRATION.md](./docs/REACT_INTEGRATION.md).
 
 Semua endpoint chat dan kontak membutuhkan access token pada header `Authorization: Bearer <token>`.
 
 - `GET /api/v1/contacts` mengambil daftar teman yang sudah menerima permintaan pertemanan.
 - `GET /api/v1/contacts/requests` mengambil permintaan masuk dan keluar; field `direction` menunjukkan arahnya.
-- `POST /api/v1/contacts/:user_id/requests` mengirim permintaan. Jika kedua pengguna saling mengirim permintaan, hubungan langsung diterima.
+- `POST /api/v1/contacts/requests` dengan body `{"phone":"..."}` mencari pengguna melalui nomor telepon dan mengirim permintaan. Jika kedua pengguna saling mengirim permintaan, hubungan langsung diterima.
 - `POST /api/v1/contacts/:user_id/accept` menerima permintaan dari pengguna tersebut.
 - `DELETE /api/v1/contacts/:user_id/requests` menolak permintaan masuk dari pengguna tersebut.
 - `DELETE /api/v1/contacts/:user_id` menghapus pertemanan yang sudah diterima.

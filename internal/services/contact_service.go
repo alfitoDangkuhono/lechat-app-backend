@@ -2,6 +2,7 @@ package services
 
 import (
 	"math"
+	"strings"
 
 	"lechat-backend/internal/constant"
 	"lechat-backend/internal/database/dto"
@@ -17,11 +18,12 @@ func NewContactService(contactRepository *repository.ContactRepository) interfac
 	return &ContactService{contactRepository: contactRepository}
 }
 
-func (s *ContactService) RequestContact(userID, targetID uint) (string, error) {
-	if !validContactPair(userID, targetID) {
-		return "", constant.ErrChatInvalidRequest
+func (s *ContactService) RequestContactByPhone(userID uint, phone string) (uint, string, error) {
+	phone = strings.TrimSpace(phone)
+	if userID == 0 || phone == "" || len(phone) < 10 {
+		return 0, "", constant.ErrChatInvalidRequest
 	}
-	return s.contactRepository.RequestContact(userID, targetID)
+	return s.contactRepository.RequestContactByPhone(userID, phone)
 }
 
 func (s *ContactService) AcceptContact(userID, targetID uint) error {

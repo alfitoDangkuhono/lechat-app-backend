@@ -7,11 +7,14 @@ import (
 	"lechat-backend/internal/services"
 )
 
-func TestContactServiceRejectsInvalidUserPairs(t *testing.T) {
+func TestContactServiceRejectsInvalidPhoneRequests(t *testing.T) {
 	service := services.NewContactService(nil)
-	for _, pair := range [][2]uint{{0, 1}, {1, 0}, {1, 1}} {
-		if _, err := service.RequestContact(pair[0], pair[1]); err != constant.ErrChatInvalidRequest {
-			t.Errorf("RequestContact(%d, %d) error = %v, want %v", pair[0], pair[1], err, constant.ErrChatInvalidRequest)
+	for _, phone := range []string{"", "123456789"} {
+		if _, _, err := service.RequestContactByPhone(1, phone); err != constant.ErrChatInvalidRequest {
+			t.Errorf("RequestContactByPhone(%q) error = %v, want %v", phone, err, constant.ErrChatInvalidRequest)
 		}
+	}
+	if _, _, err := service.RequestContactByPhone(0, "1234567890"); err != constant.ErrChatInvalidRequest {
+		t.Errorf("RequestContactByPhone with zero user ID error = %v, want %v", err, constant.ErrChatInvalidRequest)
 	}
 }

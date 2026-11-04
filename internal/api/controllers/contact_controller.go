@@ -7,6 +7,7 @@ import (
 	"lechat-backend/internal/constant"
 	"lechat-backend/internal/database/models"
 	"lechat-backend/internal/interfaces"
+	"lechat-backend/internal/request"
 	"lechat-backend/utils"
 
 	"github.com/gin-gonic/gin"
@@ -49,11 +50,17 @@ func (c *ContactController) ListRequests(ctx *gin.Context) {
 }
 
 func (c *ContactController) RequestContact(ctx *gin.Context) {
-	claims, targetID, ok := contactTarget(ctx)
+	claims, ok := authenticatedClaims(ctx)
 	if !ok {
+		writeChatError(ctx, http.StatusUnauthorized, constant.ErrInvalidToken)
 		return
 	}
-	status, err := c.contacts.RequestContact(claims.UserId, targetID)
+	var req request.ContactRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		writeChatError(ctx, http.StatusBadRequest, constant.ErrChatInvalidRequest)
+		return
+	}
+	targetID, status, err := c.contacts.RequestContactByPhone(claims.UserId, req.Phone)
 	if err != nil {
 		writeChatServiceError(ctx, err)
 		return
