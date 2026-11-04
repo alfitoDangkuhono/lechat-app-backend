@@ -275,6 +275,8 @@ API `WebSocket` browser tidak menyediakan opsi untuk menambahkan header `Authori
 5. Tunggu `conversation.history`; `data.joined` bernilai `true` untuk join.
 6. Tangani event real-time dan tutup koneksi ketika komponen/session dibersihkan.
 
+Event `message.created` dikirim ke semua koneksi WebSocket online milik anggota aktif pada conversation tersebut, meskipun koneksinya tidak sedang join ke conversation itu. Frontend dapat memakai event ini untuk memperbarui preview, badge unread, atau toast untuk conversation lain. Pengiriman ini hanya berlaku saat pengguna online; notifikasi browser/OS atau push saat offline memerlukan dukungan push terpisah.
+
 Sebelum frame `auth.ok`, server menunggu frame auth pertama selama paling lama 8 detik. Event WebSocket memakai bentuk `{ "type": "...", "conversation_id": "...", "data": ..., "error": "..." }`. Tidak ada `request_id` untuk mencocokkan error dengan frame tertentu.
 
 ### Contoh hook WebSocket
@@ -430,20 +432,24 @@ Sesuaikan strategi pengurutan pesan dengan UI: history dikirim terbaru dahulu, s
 
 ### Mengirim pesan
 
-`message.send` wajib dikirim setelah `conversation.join` berhasil dilakukan. Server menyimpan pesan dan broadcast `message.created` ke subscriber aktif, termasuk pengirim yang masih join. Buat UUID baru per pesan; jika retry akibat koneksi tidak pasti, gunakan UUID **yang sama** supaya backend dapat mencegah duplikasi.
+`message.send` wajib dikirim setelah `conversation.join` berhasil dilakukan. Server menyimpan pesan dan broadcast `message.created` ke semua koneksi WebSocket pengguna yang masih menjadi anggota aktif conversation, termasuk koneksi pengguna yang tidak join pada room tersebut dan pengirim. Pesan yang dikirim melalui REST juga menghasilkan event yang sama. Buat UUID baru per pesan; jika retry akibat koneksi tidak pasti, gunakan UUID **yang sama** supaya backend dapat mencegah duplikasi.
+
+Untuk membalas pesan, tambahkan `reply_to_message_id` (UUID pesan target) pada frame `message.send`. Field ini opsional; jika diberikan, target harus berada di conversation yang sama. REST menerima field opsional yang sama pada `POST /conversations/{conversation_id}/messages`. Target yang tidak ditemukan atau berasal dari conversation lain menghasilkan HTTP `422` pada REST atau event `error` pada WebSocket. Respons pengiriman, history, dan event `message.created` berisi `reply_to` dengan `id`, `sender_id`, `username`, `body`, `type`, dan `is_deleted`. Jika pesan asal dihapus, `reply_to` tetap tersedia dengan `is_deleted: true` dan body kosong.
 
 ```js
-function sendText(send, conversationId, body) {
+function sendText(send, conversationId, body, replyToMessageId = null) {
   const text = body.trim();
   if (!text) return false;
 
-  return send({
+  const frame = {
     type: "message.send",
     conversation_id: conversationId,
     client_message_id: crypto.randomUUID(),
     message_type: "text",
     body: text,
-  });
+  };
+  if (replyToMessageId) frame.reply_to_message_id = replyToMessageId;
+  return send(frame);
 }
 ```
 
@@ -487,10 +493,13 @@ Semua endpoint tersebut membutuhkan access token. Endpoint mengirim permintaan m
 
 ### Group invitations
 
+- Ambil anggota aktif grup: `GET /conversations/{conversation_id}/members`. Endpoint ini memerlukan access token dan hanya dapat digunakan oleh anggota aktif grup.
 - Undang: `POST /conversations/{conversation_id}/invitations` dengan `{"user_id": 24}`.
 - Daftar: `GET /group-invitations`.
 - Terima: `POST /group-invitations/{invitation_id}/accept`.
 - Tolak: `DELETE /group-invitations/{invitation_id}`.
+
+Response daftar anggota berupa array pada `data`; setiap item memiliki `user_id`, `username`, `first_name`, `last_name`, dan `role`. Anggota yang sudah keluar tidak disertakan.
 
 Hanya owner/admin yang dapat mengundang; undangan ditujukan ke kontak accepted. Error `409` berarti konflik seperti undangan pending atau anggota sudah ada; tampilkan pesan yang sesuai dan refresh state relevan.
 
@@ -500,6 +509,7 @@ Hanya owner/admin yang dapat mengundang; undangan ditujukan ke kontak accepted. 
 - HTTP `403`: pengguna tidak berhak mengakses conversation/action atau bukan kontak accepted.
 - HTTP `404`: data/conversation/message tidak ditemukan.
 - HTTP `409`: conflict, misalnya idempotency key digunakan dengan isi berbeda atau undangan duplikat.
+- HTTP `422`: target reply tidak valid atau bukan bagian dari conversation yang sama.
 - WebSocket `error`: tampilkan `event.error`; server tidak menyertakan request ID untuk mengaitkan error ke satu frame.
 - WebSocket memvalidasi token setiap 15 detik. Token tidak dapat diperbarui pada socket yang sedang terbuka; setelah access token dirotasi, buka koneksi baru dengan token terbaru, autentikasi ulang, lalu join ulang.
 - WebSocket close: reconnect dengan exponential backoff dan jitter di production. Ambil token valid lagi sebelum membuka koneksi baru.

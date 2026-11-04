@@ -62,13 +62,41 @@ Jalankan migrasi SQL pada database PostgreSQL sebelum memulai aplikasi, dengan u
 8. `internal/database/migrations/20261103070000_chat_hardening.up.sql`
 9. `internal/database/migrations/20261103133900_contacts.up.sql`
 10. `internal/database/migrations/20261103140000_group_invitations.up.sql`
+11. `internal/database/migrations/20261104130000_message_replies.up.sql`
 
 Migrasi `20261103070000_chat_hardening` menambah constraint pasangan pengguna direct. Setiap percakapan `direct` harus dibuat dengan `direct_user_low` dan `direct_user_high` berisi ID pengguna terurut (nilai rendah terlebih dahulu); keduanya harus menjadi anggota percakapan. Migrasi `20261103133900_contacts` menambah pertemanan dan mensyaratkan kontak berstatus `accepted` untuk chat direct. Percakapan direct lama yang tidak memiliki relasi kontak accepted tidak tampil/dapat digunakan sampai kedua pengguna berteman. Untuk pengiriman ulang yang idempotent, klien perlu mengirim `client_message_id` yang sama pada retry. Lampiran menyimpan `storage_key` dan metadata di database; isi file tetap perlu disimpan di object storage.
 
-Comman membuat dan menjalankan migration:
-1. create : `migrate create -ext sql -dir internal/database/migrations [nama migration]`
-2. running: `migrate -path internal/database/migrations -database "postgres://devuser:[password]@[ip database]:[port database]/[name-database]?sslmode=disable" [up/down]`
-Aplikasi belum menjalankan migrasi database secara otomatis.
+Migrasi `20261104130000_message_replies` menambahkan kolom nullable `messages.reply_to_message_id`. Untuk pesan balasan, nilai tersebut disimpan pada **baris pesan balasan** dan menunjuk ke ID pesan asal; baris pesan asal tidak diubah. Jalankan migrasi setelah deploy kode backend:
+
+```powershell
+migrate -path internal/database/migrations -database "postgres://<user>:<password>@<host>:<port>/<database>?sslmode=disable" up
+```
+
+Pastikan versi migrasi database sudah mencakup `20261104130000` dan kolom tersedia:
+
+```sql
+SELECT version, dirty FROM schema_migrations;
+
+SELECT column_name
+FROM information_schema.columns
+WHERE table_schema = current_schema()
+  AND table_name = 'messages'
+  AND column_name = 'reply_to_message_id';
+```
+
+Untuk memeriksa pesan balasan yang sudah tersimpan:
+
+```sql
+SELECT id, conversation_id, sender_id, reply_to_message_id, body
+FROM messages
+WHERE reply_to_message_id IS NOT NULL
+ORDER BY created_at DESC
+LIMIT 20;
+```
+
+Aplikasi belum menjalankan migrasi database secara otomatis. Perintah `migrate ... up` menerapkan migrasi yang belum dijalankan sesuai urutan versinya; jangan hanya menjalankan ulang file SQL secara manual pada database yang sudah memakai migration tracking.
+
+Comman membuat migration baru: `migrate create -ext sql -dir internal/database/migrations [nama_migration]`.
 
 ### Chat API
 

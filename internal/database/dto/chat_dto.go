@@ -6,6 +6,7 @@ type ConversationDto struct {
 	ID                 string                  `json:"id"`
 	Type               string                  `json:"type"`
 	Title              *string                 `json:"title"`
+	MemberCount        int64                   `json:"member_count,omitempty"`
 	Members            []ConversationMemberDto `json:"members" gorm:"-"`
 	CreatedAt          time.Time               `json:"created_at"`
 	UpdatedAt          time.Time               `json:"updated_at"`
@@ -14,6 +15,13 @@ type ConversationDto struct {
 	LastMessageType    *string                 `json:"last_message_type"`
 	LastMessageAt      *time.Time              `json:"last_message_at"`
 	UnreadMessageCount int64                   `json:"unread_message_count"`
+}
+
+type ConversationCreationDto struct {
+	ID          string  `json:"id"`
+	Type        string  `json:"type"`
+	Title       *string `json:"title"`
+	MemberCount int64   `json:"member_count"`
 }
 
 type ConversationMemberDto struct {
@@ -25,18 +33,34 @@ type ConversationMemberDto struct {
 }
 
 type MessageDto struct {
-	ID              string     `json:"id"`
-	ConversationID  string     `json:"conversation_id"`
-	SenderID        int64      `json:"sender_id"`
-	ClientMessageID string     `json:"client_message_id"`
-	Type            string     `json:"type"`
-	Body            string     `json:"body"`
-	EditedAt        *time.Time `json:"edited_at"`
-	DeletedAt       *time.Time `json:"deleted_at"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
-	DeliveredCount  int64      `json:"delivered_count"`
-	ReadCount       int64      `json:"read_count"`
+	ID               string           `json:"id"`
+	ConversationID   string           `json:"conversation_id"`
+	SenderID         int64            `json:"sender_id"`
+	ClientMessageID  string           `json:"client_message_id"`
+	ReplyToMessageID *string          `json:"reply_to_message_id,omitempty" gorm:"column:reply_to_message_id"`
+	ReplyTo          *MessageReplyDto `json:"reply_to,omitempty" gorm:"-"`
+	ReplyToSenderID  *int64           `json:"-" gorm:"column:reply_to_sender_id"`
+	ReplyToUsername  *string          `json:"-" gorm:"column:reply_to_username"`
+	ReplyToBody      *string          `json:"-" gorm:"column:reply_to_body"`
+	ReplyToType      *string          `json:"-" gorm:"column:reply_to_type"`
+	ReplyToIsDeleted *bool            `json:"-" gorm:"column:reply_to_is_deleted"`
+	Type             string           `json:"type"`
+	Body             string           `json:"body"`
+	EditedAt         *time.Time       `json:"edited_at"`
+	DeletedAt        *time.Time       `json:"deleted_at"`
+	CreatedAt        time.Time        `json:"created_at"`
+	UpdatedAt        time.Time        `json:"updated_at"`
+	DeliveredCount   int64            `json:"delivered_count"`
+	ReadCount        int64            `json:"read_count"`
+}
+
+type MessageReplyDto struct {
+	ID        string `json:"id"`
+	SenderID  int64  `json:"sender_id"`
+	Username  string `json:"username"`
+	Body      string `json:"body"`
+	Type      string `json:"type"`
+	IsDeleted bool   `json:"is_deleted"`
 }
 
 type ReadReceiptDto struct {

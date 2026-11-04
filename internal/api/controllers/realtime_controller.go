@@ -35,16 +35,17 @@ type RealtimeController struct {
 }
 
 type realtimeFrame struct {
-	Type             string `json:"type"`
-	Token            string `json:"token,omitempty"`
-	ConversationID   string `json:"conversation_id,omitempty"`
-	BeforeID         string `json:"before_id,omitempty"`
-	Limit            int    `json:"limit,omitempty"`
-	ClientMessageID  string `json:"client_message_id,omitempty"`
-	MessageType      string `json:"message_type,omitempty"`
-	Body             string `json:"body,omitempty"`
-	MessageID        string `json:"message_id,omitempty"`
-	ThroughMessageID string `json:"through_message_id,omitempty"`
+	Type             string  `json:"type"`
+	Token            string  `json:"token,omitempty"`
+	ConversationID   string  `json:"conversation_id,omitempty"`
+	BeforeID         string  `json:"before_id,omitempty"`
+	Limit            int     `json:"limit,omitempty"`
+	ClientMessageID  string  `json:"client_message_id,omitempty"`
+	MessageType      string  `json:"message_type,omitempty"`
+	Body             string  `json:"body,omitempty"`
+	ReplyToMessageID *string `json:"reply_to_message_id,omitempty"`
+	MessageID        string  `json:"message_id,omitempty"`
+	ThroughMessageID string  `json:"through_message_id,omitempty"`
 }
 
 type realtimeEvent struct {
@@ -221,14 +222,15 @@ func (c *RealtimeController) handleFrame(client *services.RealtimeClient, userID
 			return constant.ErrChatForbidden
 		}
 		message, err := c.chat.SendMessage(userID, frame.ConversationID, request.SendMessageRequest{
-			ClientMessageID: frame.ClientMessageID,
-			Type:            frame.MessageType,
-			Body:            frame.Body,
+			ClientMessageID:  frame.ClientMessageID,
+			Type:             frame.MessageType,
+			Body:             frame.Body,
+			ReplyToMessageID: frame.ReplyToMessageID,
 		})
 		if err != nil {
 			return err
 		}
-		return c.broadcastConversation(frame.ConversationID, realtimeEvent{
+		return c.broadcastConversationMembers(frame.ConversationID, realtimeEvent{
 			Type:           "message.created",
 			ConversationID: frame.ConversationID,
 			Data:           message,
@@ -295,6 +297,14 @@ func (c *RealtimeController) broadcastConversation(conversationID string, event 
 	return c.hub.Broadcast(conversationID, memberIDs, event)
 }
 
+func (c *RealtimeController) broadcastConversationMembers(conversationID string, event realtimeEvent) error {
+	memberIDs, err := c.chat.ActiveMemberIDs(conversationID)
+	if err != nil {
+		return err
+	}
+	return c.hub.BroadcastUsers(memberIDs, event)
+}
+
 func (c *RealtimeController) writePump(conn *websocket.Conn, client *services.RealtimeClient, token string) {
 	pingTicker := time.NewTicker(realtimePingPeriod)
 	authTicker := time.NewTicker(realtimeAuthPeriod)
@@ -331,6 +341,8 @@ func realtimeErrorMessage(err error) string {
 	switch {
 	case errors.Is(err, constant.ErrChatInvalidRequest):
 		return constant.ErrChatInvalidRequest.Error()
+	case errors.Is(err, constant.ErrChatInvalidReply):
+		return constant.ErrChatInvalidReply.Error()
 	case errors.Is(err, constant.ErrChatForbidden), errors.Is(err, constant.ErrChatNotContact):
 		return constant.ErrChatForbidden.Error()
 	case errors.Is(err, gorm.ErrRecordNotFound):

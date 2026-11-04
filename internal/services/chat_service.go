@@ -23,15 +23,18 @@ func NewChatService(chatRepository *repository.ChatRepository) interfaces.IChat 
 	return &ChatService{chatRepository: chatRepository}
 }
 
-func (s *ChatService) CreateConversation(userID uint, req request.CreateConversationRequest) (string, error) {
+func (s *ChatService) CreateConversation(userID uint, req request.CreateConversationRequest) (dto.ConversationCreationDto, error) {
 	if req.Type != "direct" && req.Type != "group" {
-		return "", constant.ErrChatInvalidRequest
+		return dto.ConversationCreationDto{}, constant.ErrChatInvalidRequest
 	}
 
 	memberSet := map[uint]struct{}{userID: {}}
 	for _, memberID := range req.MemberIDs {
 		if memberID == 0 || uint64(memberID) > math.MaxInt64 {
-			return "", constant.ErrChatInvalidRequest
+			return dto.ConversationCreationDto{}, constant.ErrChatInvalidRequest
+		}
+		if req.Type == "group" && memberID == userID {
+			return dto.ConversationCreationDto{}, constant.ErrChatInvalidRequest
 		}
 		memberSet[memberID] = struct{}{}
 	}
@@ -44,7 +47,7 @@ func (s *ChatService) CreateConversation(userID uint, req request.CreateConversa
 
 	if (req.Type == "direct" && len(memberIDs) != 2) ||
 		(req.Type == "group" && len(memberIDs) < 2) {
-		return "", constant.ErrChatInvalidRequest
+		return dto.ConversationCreationDto{}, constant.ErrChatInvalidRequest
 	}
 	if req.Type == "direct" {
 		req.Title = nil
@@ -56,12 +59,29 @@ func (s *ChatService) CreateConversation(userID uint, req request.CreateConversa
 			req.Title = &title
 		}
 	}
+	if req.Type == "group" && req.Title == nil {
+		title := "Grup baru"
+		req.Title = &title
+	}
 
-	return s.chatRepository.CreateConversation(userID, req, memberIDs)
+	conversationID, err := s.chatRepository.CreateConversation(userID, req, memberIDs)
+	if err != nil {
+		return dto.ConversationCreationDto{}, err
+	}
+	return dto.ConversationCreationDto{
+		ID:          conversationID,
+		Type:        req.Type,
+		Title:       req.Title,
+		MemberCount: int64(len(memberIDs)),
+	}, nil
 }
 
 func (s *ChatService) ListConversations(userID uint) ([]dto.ConversationDto, error) {
 	return s.chatRepository.ListConversations(userID)
+}
+
+func (s *ChatService) ListGroupMembers(userID uint, conversationID string) ([]dto.ConversationMemberDto, error) {
+	return s.chatRepository.ListGroupMembers(userID, conversationID)
 }
 
 func (s *ChatService) ListMessages(userID uint, conversationID, beforeID string, limit int) ([]dto.MessageDto, error) {
@@ -77,6 +97,9 @@ func (s *ChatService) SendMessage(userID uint, conversationID string, req reques
 	}
 	if req.Type == "text" && strings.TrimSpace(req.Body) == "" {
 		return dto.MessageDto{}, constant.ErrChatInvalidRequest
+	}
+	if req.ReplyToMessageID != nil && !groupInvitationUUIDPattern.MatchString(*req.ReplyToMessageID) {
+		return dto.MessageDto{}, constant.ErrChatInvalidReply
 	}
 	return s.chatRepository.SendMessage(userID, conversationID, req)
 }

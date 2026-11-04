@@ -17,6 +17,40 @@ type ChatRepository struct {
 	db *gorm.DB
 }
 
+func messageDTOQuery(db *gorm.DB) *gorm.DB {
+	return db.Table("messages").
+		Select(`
+			messages.id, messages.conversation_id, messages.sender_id, messages.client_message_id,
+			messages.reply_to_message_id, messages.type, messages.body, messages.edited_at,
+			messages.deleted_at, messages.created_at, messages.updated_at,
+			reply.sender_id AS reply_to_sender_id,
+			reply_sender.username AS reply_to_username,
+			CASE WHEN reply.deleted_at IS NULL THEN reply.body ELSE '' END AS reply_to_body,
+			reply.type AS reply_to_type,
+			(reply.deleted_at IS NOT NULL) AS reply_to_is_deleted,
+			(SELECT COUNT(*) FROM messages_receipts WHERE message_id = messages.id AND delivered_at IS NOT NULL) AS delivered_count,
+			(SELECT COUNT(*) FROM messages_receipts WHERE message_id = messages.id AND read_at IS NOT NULL) AS read_count
+		`).
+		Joins("LEFT JOIN messages AS reply ON reply.id = messages.reply_to_message_id").
+		Joins("LEFT JOIN users AS reply_sender ON reply_sender.id = reply.sender_id")
+}
+
+func setMessageReply(message *dto.MessageDto) {
+	if message.ReplyToMessageID == nil || message.ReplyToSenderID == nil ||
+		message.ReplyToUsername == nil || message.ReplyToBody == nil ||
+		message.ReplyToType == nil || message.ReplyToIsDeleted == nil {
+		return
+	}
+	message.ReplyTo = &dto.MessageReplyDto{
+		ID:        *message.ReplyToMessageID,
+		SenderID:  *message.ReplyToSenderID,
+		Username:  *message.ReplyToUsername,
+		Body:      *message.ReplyToBody,
+		Type:      *message.ReplyToType,
+		IsDeleted: *message.ReplyToIsDeleted,
+	}
+}
+
 func NewChatRepository(db *gorm.DB) *ChatRepository {
 	return &ChatRepository{db: db}
 }
@@ -30,6 +64,28 @@ func (r *ChatRepository) CreateConversation(userID uint, req request.CreateConve
 		}
 		if existingUsers != int64(len(memberIDs)) {
 			return constant.ErrChatInvalidRequest
+		}
+
+		if req.Type == "group" {
+			contactIDs := make([]uint, 0, len(memberIDs)-1)
+			for _, memberID := range memberIDs {
+				if memberID != userID {
+					contactIDs = append(contactIDs, memberID)
+				}
+			}
+
+			var acceptedContacts int64
+			if err := tx.Raw(`
+				SELECT COUNT(*)
+				FROM contacts
+				WHERE status = 'accepted'
+				  AND ((user_low = ? AND user_high IN ?) OR (user_high = ? AND user_low IN ?))
+			`, userID, contactIDs, userID, contactIDs).Scan(&acceptedContacts).Error; err != nil {
+				return err
+			}
+			if acceptedContacts != int64(len(contactIDs)) {
+				return constant.ErrChatNotContact
+			}
 		}
 
 		if req.Type == "direct" {
@@ -203,20 +259,29 @@ func (r *ChatRepository) ListConversations(userID uint) ([]dto.ConversationDto, 
 	return conversations, err
 }
 
+func (r *ChatRepository) ListGroupMembers(userID uint, conversationID string) ([]dto.ConversationMemberDto, error) {
+	if _, err := activeGroupRole(r.db, userID, conversationID); err != nil {
+		return nil, err
+	}
+
+	members := make([]dto.ConversationMemberDto, 0)
+	err := r.db.Table("conversations_members AS member").
+		Select("users.id AS user_id, users.username, COALESCE(users.first_name, '') AS first_name, COALESCE(users.last_name, '') AS last_name, member.role").
+		Joins("JOIN users ON users.id = member.user_id").
+		Where("member.conversation_id = ? AND member.left_at IS NULL", conversationID).
+		Order("member.joined_at ASC, users.id ASC").
+		Find(&members).Error
+	return members, err
+}
+
 func (r *ChatRepository) ListMessages(userID uint, conversationID, beforeID string, limit int) ([]dto.MessageDto, error) {
 	if err := r.requireActiveMember(userID, conversationID); err != nil {
 		return nil, err
 	}
 
-	query := r.db.Table("messages").
-		Select(`
-			messages.id, conversation_id, sender_id, client_message_id, type, body,
-			edited_at, deleted_at, created_at, updated_at,
-			(SELECT COUNT(*) FROM messages_receipts WHERE message_id = messages.id AND delivered_at IS NOT NULL) AS delivered_count,
-			(SELECT COUNT(*) FROM messages_receipts WHERE message_id = messages.id AND read_at IS NOT NULL) AS read_count
-		`).
-		Where("conversation_id = ?", conversationID).
-		Order("created_at DESC, id DESC").
+	query := messageDTOQuery(r.db).
+		Where("messages.conversation_id = ?", conversationID).
+		Order("messages.created_at DESC, messages.id DESC").
 		Limit(limit)
 	if beforeID != "" {
 		var cursorExists bool
@@ -232,7 +297,7 @@ func (r *ChatRepository) ListMessages(userID uint, conversationID, beforeID stri
 			return nil, gorm.ErrRecordNotFound
 		}
 		query = query.Where(
-			"(created_at, id) < (SELECT created_at, id FROM messages WHERE id = ? AND conversation_id = ?)",
+			"(messages.created_at, messages.id) < (SELECT created_at, id FROM messages WHERE id = ? AND conversation_id = ?)",
 			beforeID,
 			conversationID,
 		)
@@ -240,6 +305,9 @@ func (r *ChatRepository) ListMessages(userID uint, conversationID, beforeID stri
 
 	var messages []dto.MessageDto
 	err := query.Find(&messages).Error
+	for i := range messages {
+		setMessageReply(&messages[i])
+	}
 	return messages, err
 }
 
@@ -247,27 +315,39 @@ func (r *ChatRepository) SendMessage(userID uint, conversationID string, req req
 	if err := r.requireActiveMember(userID, conversationID); err != nil {
 		return dto.MessageDto{}, err
 	}
+	if req.ReplyToMessageID != nil {
+		var replyTargetExists bool
+		if err := r.db.Raw(`
+			SELECT EXISTS (
+				SELECT 1
+				FROM messages
+				WHERE id = ? AND conversation_id = ?
+			)
+		`, *req.ReplyToMessageID, conversationID).Scan(&replyTargetExists).Error; err != nil {
+			return dto.MessageDto{}, err
+		}
+		if !replyTargetExists {
+			return dto.MessageDto{}, constant.ErrChatInvalidReply
+		}
+	}
 
 	message := models.Message{
-		ConversationID:  conversationID,
-		SenderID:        int64(userID),
-		ClientMessageID: req.ClientMessageID,
-		Type:            req.Type,
-		Body:            req.Body,
+		ConversationID:   conversationID,
+		SenderID:         int64(userID),
+		ClientMessageID:  req.ClientMessageID,
+		ReplyToMessageID: req.ReplyToMessageID,
+		Type:             req.Type,
+		Body:             req.Body,
 	}
 	if err := r.db.Table("messages").Create(&message).Error; err != nil {
 		var existing dto.MessageDto
-		findErr := r.db.Table("messages").
-			Select(`
-				messages.id, conversation_id, sender_id, client_message_id, type, body,
-				edited_at, deleted_at, created_at, updated_at,
-				(SELECT COUNT(*) FROM messages_receipts WHERE message_id = messages.id AND delivered_at IS NOT NULL) AS delivered_count,
-				(SELECT COUNT(*) FROM messages_receipts WHERE message_id = messages.id AND read_at IS NOT NULL) AS read_count
-			`).
-			Where("sender_id = ? AND client_message_id = ?", userID, req.ClientMessageID).
+		findErr := messageDTOQuery(r.db).
+			Where("messages.sender_id = ? AND messages.client_message_id = ?", userID, req.ClientMessageID).
 			Take(&existing).Error
 		if findErr == nil {
-			if existing.ConversationID == conversationID && existing.Type == req.Type && existing.Body == req.Body {
+			if existing.ConversationID == conversationID && existing.Type == req.Type &&
+				existing.Body == req.Body && sameOptionalString(existing.ReplyToMessageID, req.ReplyToMessageID) {
+				setMessageReply(&existing)
 				return existing, nil
 			}
 			return dto.MessageDto{}, constant.ErrChatConflict
@@ -275,16 +355,19 @@ func (r *ChatRepository) SendMessage(userID uint, conversationID string, req req
 		return dto.MessageDto{}, err
 	}
 
-	return dto.MessageDto{
-		ID:              message.ID,
-		ConversationID:  message.ConversationID,
-		SenderID:        message.SenderID,
-		ClientMessageID: message.ClientMessageID,
-		Type:            message.Type,
-		Body:            message.Body,
-		CreatedAt:       message.CreatedAt,
-		UpdatedAt:       message.UpdatedAt,
-	}, nil
+	var created dto.MessageDto
+	if err := messageDTOQuery(r.db).Where("messages.id = ?", message.ID).Take(&created).Error; err != nil {
+		return dto.MessageDto{}, err
+	}
+	setMessageReply(&created)
+	return created, nil
+}
+
+func sameOptionalString(first, second *string) bool {
+	if first == nil || second == nil {
+		return first == nil && second == nil
+	}
+	return *first == *second
 }
 
 func (r *ChatRepository) MarkRead(userID uint, conversationID string, req request.MarkReadRequest) (dto.ReadReceiptDto, error) {
@@ -392,15 +475,8 @@ func (r *ChatRepository) EditMessage(userID uint, messageID string, req request.
 	}
 
 	var message dto.MessageDto
-	err := r.db.Table("messages").
-		Select(`
-			messages.id, conversation_id, sender_id, client_message_id, type, body,
-			edited_at, deleted_at, created_at, updated_at,
-			(SELECT COUNT(*) FROM messages_receipts WHERE message_id = messages.id AND delivered_at IS NOT NULL) AS delivered_count,
-			(SELECT COUNT(*) FROM messages_receipts WHERE message_id = messages.id AND read_at IS NOT NULL) AS read_count
-		`).
-		Where("id = ?", messageID).
-		Take(&message).Error
+	err := messageDTOQuery(r.db).Where("messages.id = ?", messageID).Take(&message).Error
+	setMessageReply(&message)
 	return message, err
 }
 
@@ -422,15 +498,8 @@ func (r *ChatRepository) DeleteMessage(userID uint, messageID string) (dto.Messa
 	}
 
 	var message dto.MessageDto
-	err := r.db.Table("messages").
-		Select(`
-			messages.id, conversation_id, sender_id, client_message_id, type, body,
-			edited_at, deleted_at, created_at, updated_at,
-			(SELECT COUNT(*) FROM messages_receipts WHERE message_id = messages.id AND delivered_at IS NOT NULL) AS delivered_count,
-			(SELECT COUNT(*) FROM messages_receipts WHERE message_id = messages.id AND read_at IS NOT NULL) AS read_count
-		`).
-		Where("id = ?", messageID).
-		Take(&message).Error
+	err := messageDTOQuery(r.db).Where("messages.id = ?", messageID).Take(&message).Error
+	setMessageReply(&message)
 	return message, err
 }
 

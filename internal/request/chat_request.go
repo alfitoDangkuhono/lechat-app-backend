@@ -7,9 +7,10 @@ type CreateConversationRequest struct {
 }
 
 type SendMessageRequest struct {
-	ClientMessageID string `json:"client_message_id" binding:"required,uuid"`
-	Type            string `json:"type" binding:"required,oneof=text image video file"`
-	Body            string `json:"body"`
+	ClientMessageID  string  `json:"client_message_id" binding:"required,uuid"`
+	Type             string  `json:"type" binding:"required,oneof=text image video file"`
+	Body             string  `json:"body"`
+	ReplyToMessageID *string `json:"reply_to_message_id"`
 }
 
 type MarkReadRequest struct {

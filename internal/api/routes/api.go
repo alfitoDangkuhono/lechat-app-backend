@@ -24,6 +24,7 @@ func Routes(router *gin.Engine, authenticationController *controllers.Authentica
 		chatController := chatControllers[0]
 		authenticated.POST("/conversations", chatController.CreateConversation)
 		authenticated.GET("/conversations", chatController.ListConversations)
+		authenticated.GET("/conversations/:conversation_id/members", chatController.ListGroupMembers)
 		authenticated.GET("/conversations/:conversation_id/messages", chatController.ListMessages)
 		authenticated.POST("/conversations/:conversation_id/messages", chatController.SendMessage)
 		authenticated.POST("/conversations/:conversation_id/delivered", chatController.MarkDelivered)
