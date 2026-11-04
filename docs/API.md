@@ -206,7 +206,8 @@ Response `data`:
       "created_at": "2026-11-03T07:00:00Z",
       "updated_at": "2026-11-03T07:00:00Z",
       "delivered_count": 1,
-      "read_count": 0
+      "read_count": 0,
+      "receipt_status": "read"
     }
   ],
   "next_before_id": "123e4567-e89b-12d3-a456-426614174001"
@@ -245,6 +246,8 @@ Both `POST /conversations/{conversation_id}/delivered` and `POST /conversations/
 ```
 
 The cursor must reference a message in the conversation. The response includes `conversation_id`, `through_message_id`, and `marked_count`.
+
+When read status is updated through WebSocket or REST, the server sends a `receipt.read` event to online senders of non-deleted messages covered through that cursor. The event has the conversation ID and `data.through_message_id`. Message history includes `receipt_status` for outgoing messages: `sent`, `delivered`, or `read`; incoming messages omit this field.
 
 ### Edit and delete message
 
@@ -357,7 +360,9 @@ Events are JSON objects with `type`, optional `conversation_id`, and optional `d
 | `message.updated` | A message was edited |
 | `message.deleted` | A message was soft-deleted |
 | `receipt.delivered` | Delivery receipt update |
-| `receipt.read` | Read receipt update |
+| `receipt.read` | Read receipt update, sent to online senders of messages covered by the cursor |
 | `error` | Request failed; `error` contains a message |
 
-`message.created` is sent to every connected socket for active members of the conversation, including sockets not joined to that room. Other room broadcasts (message edits/deletes and receipts) are still sent only to joined subscribers who remain active members. Messages sent through REST also emit `message.created`. These are online WebSocket events, not browser/OS push notifications; offline delivery requires a separate push notification service.
+`message.created` is sent to every connected socket for active members of the conversation, including sockets not joined to that room. Message edit/delete and `receipt.delivered` events are sent only to joined subscribers who remain active members. Messages sent through REST also emit `message.created`. These are online WebSocket events, not browser/OS push notifications; offline delivery requires a separate push notification service.
+
+`receipt.read` is sent to every online WebSocket connection belonging to the senders of non-deleted messages covered by the reader's cursor. Its `data` contains `through_message_id`; the outer event contains `conversation_id`. This event is delivered independently of whether the sender joined the room.

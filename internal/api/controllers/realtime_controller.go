@@ -243,20 +243,28 @@ func (c *RealtimeController) handleFrame(client *services.RealtimeClient, userID
 			return constant.ErrChatForbidden
 		}
 		req := request.MarkReadRequest{ThroughMessageID: frame.ThroughMessageID}
-		var receipt interface{}
-		var err error
 		if frame.Type == "receipt.delivered" {
-			receipt, err = c.chat.MarkDelivered(userID, frame.ConversationID, req)
-		} else {
-			receipt, err = c.chat.MarkRead(userID, frame.ConversationID, req)
+			receipt, err := c.chat.MarkDelivered(userID, frame.ConversationID, req)
+			if err != nil {
+				return err
+			}
+			return c.broadcastConversation(frame.ConversationID, realtimeEvent{
+				Type:           "receipt.delivered",
+				ConversationID: frame.ConversationID,
+				Data:           receipt,
+			})
 		}
+
+		receipt, err := c.chat.MarkRead(userID, frame.ConversationID, req)
 		if err != nil {
 			return err
 		}
-		return c.broadcastConversation(frame.ConversationID, realtimeEvent{
-			Type:           frame.Type,
+		return c.hub.BroadcastUsers(receipt.SenderIDs, realtimeEvent{
+			Type:           "receipt.read",
 			ConversationID: frame.ConversationID,
-			Data:           receipt,
+			Data: gin.H{
+				"through_message_id": receipt.ThroughMessageID,
+			},
 		})
 	case "message.edit":
 		if !uuidPattern.MatchString(frame.MessageID) {
