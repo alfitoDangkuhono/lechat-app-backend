@@ -14,7 +14,7 @@ func ContactRoutes(router *gin.Engine, jwt interfaces.IJwtInterface, contactCont
 	authenticated.Use(middleware.Authentication(jwt))
 	authenticated.GET("/contacts", contactController.ListContacts)
 	authenticated.GET("/contacts/requests", contactController.ListRequests)
-	authenticated.POST("/contacts/:user_id/requests", contactController.RequestContact)
+	authenticated.POST("/contacts/requests", contactController.RequestContact)
 	authenticated.POST("/contacts/:user_id/accept", contactController.AcceptContact)
 	authenticated.DELETE("/contacts/:user_id/requests", contactController.RejectContact)
 	authenticated.DELETE("/contacts/:user_id", contactController.RemoveContact)

@@ -16,9 +16,21 @@ func NewContactRepository(db *gorm.DB) *ContactRepository {
 	return &ContactRepository{db: db}
 }
 
-func (r *ContactRepository) RequestContact(userID, targetID uint) (string, error) {
+func (r *ContactRepository) RequestContactByPhone(userID uint, phone string) (uint, string, error) {
+	var targetIDs []uint
+	if err := r.db.Model(&models.Users{}).Where("phone = ?", phone).Limit(2).Pluck("id", &targetIDs).Error; err != nil {
+		return 0, "", err
+	}
+	if len(targetIDs) == 0 {
+		return 0, "", gorm.ErrRecordNotFound
+	}
+	if len(targetIDs) != 1 {
+		return 0, "", constant.ErrChatConflict
+	}
+
+	targetID := targetIDs[0]
 	if userID == targetID || userID == 0 || targetID == 0 {
-		return "", constant.ErrChatInvalidRequest
+		return 0, "", constant.ErrChatInvalidRequest
 	}
 
 	low, high := orderedUsers(userID, targetID)
@@ -50,15 +62,15 @@ func (r *ContactRepository) RequestContact(userID, targetID uint) (string, error
 		RETURNING status, requested_by
 	`, low, high, userID, targetID).Scan(&outcome).Error
 	if err != nil {
-		return "", err
+		return 0, "", err
 	}
 	if outcome.Status == "" {
-		return "", gorm.ErrRecordNotFound
+		return 0, "", gorm.ErrRecordNotFound
 	}
 	if outcome.Status == "pending" && outcome.RequestedBy == userID {
-		return "", constant.ErrContactRequestPending
+		return 0, "", constant.ErrContactRequestPending
 	}
-	return outcome.Status, nil
+	return targetID, outcome.Status, nil
 }
 
 func (r *ContactRepository) AcceptContact(userID, targetID uint) error {
