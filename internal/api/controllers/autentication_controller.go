@@ -185,3 +185,30 @@ func (c *AuthenticationController) CheckSession(ctx *gin.Context) {
 		"expires_at": claims.ExpiresAt,
 	})
 }
+
+func (c *AuthenticationController) UpdateProfile(ctx *gin.Context) {
+	claimsValue, exists := ctx.Get(middleware.AuthenticatedClaimsKey)
+	claims, ok := claimsValue.(*models.JwtClaims)
+	if !exists || !ok || claims == nil {
+		utils.ErrorResponse(ctx, http.StatusUnauthorized, constant.ErrInvalidToken, nil)
+		return
+	}
+
+	var req request.ProfileRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		helpers.CustomValidationInput(ctx, err)
+		return
+	}
+
+	profile, err := c.iauthentication.UpdateProfile(claims.UserId, req)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.ErrorResponse(ctx, http.StatusNotFound, constant.ErrNotFoundData, nil)
+			return
+		}
+		utils.ErrorResponse(ctx, http.StatusInternalServerError, constant.ErrInternalServer, nil)
+		return
+	}
+
+	utils.SuccessResponse(ctx, http.StatusOK, profile)
+}

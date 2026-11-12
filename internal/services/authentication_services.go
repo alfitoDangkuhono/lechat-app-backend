@@ -47,3 +47,17 @@ func (s *AuthenticationService) CredentialLogin(email string, password string) (
 func (s *AuthenticationService) GetProfile(userID uint) (dto.ProfileDto, error) {
 	return s.authenticationRepository.FindProfile(userID)
 }
+
+func (s *AuthenticationService) UpdateProfile(UserId uint, req request.ProfileRequest) (dto.ProfileDto, error) {
+
+	profile, err := s.authenticationRepository.FindProfile(UserId)
+	// check if the user exists
+	if err != nil {
+		return dto.ProfileDto{}, errors.New("user_not_found")
+	}
+	// checking what is changed
+	if profile.FirstName == req.FirstName && profile.LastName == req.LastName && profile.Phone == req.Phone && profile.About == req.About {
+		return dto.ProfileDto{}, errors.New("no_changes_detected")
+	}
+	return s.authenticationRepository.UpdateProfile(UserId, req)
+}

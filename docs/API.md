@@ -41,6 +41,7 @@ Protected endpoints return `401` if the token is missing, invalid, expired, or r
 | `DELETE` | `/sessions` | Access token | Revoke the current access token |
 | `GET` | `/sessions/check-session` | Access token | Check the current authenticated session |
 | `GET` | `/profile` | Access token | Get the current user's profile |
+| `POST` | `/profile` | Access token | Update the current user's profile |
 
 ### Register — `POST /registers`
 
@@ -93,11 +94,33 @@ Send the access token in the `Authorization` header. The profile belongs to the 
     "first_name": "Jane",
     "last_name": "Doe",
     "phone": "08123456789",
+    "about": "Hello, I'm Jane.",
     "created_at": "2026-11-03T10:00:00Z",
     "updated_at": "2026-11-03T10:00:00Z"
   }
 }
 ```
+
+### Update profile — `POST /profile`
+
+Send the access token and all four required editable fields. The user ID is taken from the token; do not send `id`, `username`, or `email` in the request:
+
+```http
+POST /api/v1/profile
+Authorization: Bearer <access-token>
+Content-Type: application/json
+```
+
+```json
+{
+  "first_name": "Jane",
+  "last_name": "Doe",
+  "phone": "08123456789",
+  "about": "Hello, I'm Jane."
+}
+```
+
+`first_name`, `last_name`, `phone`, and `about` must all be non-empty strings. On success, the response is `200` with the updated profile in `data` (including read-only `id`, `username`, and `email`). Missing or invalid JSON fields return `400`; missing or invalid access tokens return `401`; an internal update failure returns `500`. The frontend should prevent submitting an unchanged profile: the current backend reports that case as `500`, not as a dedicated validation/conflict response.
 
 ## Contacts
 

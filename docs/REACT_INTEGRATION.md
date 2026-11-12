@@ -150,7 +150,7 @@ export function getProfile(accessToken) {
 }
 
 const profile = await getProfile(session.accessToken);
-// profile.id, profile.username, profile.email, profile.phone
+// profile.id, profile.username, profile.email, profile.first_name, profile.about
 ```
 
 Contoh respons endpoint:
@@ -166,6 +166,7 @@ Contoh respons endpoint:
     "first_name": "Jane",
     "last_name": "Doe",
     "phone": "08123456789",
+    "about": "Hello, I'm Jane.",
     "created_at": "2026-11-03T10:00:00Z",
     "updated_at": "2026-11-03T10:00:00Z"
   }
@@ -173,6 +174,39 @@ Contoh respons endpoint:
 ```
 
 Profil selalu untuk pengguna dari token; endpoint ini tidak menerima `user_id` atau body. `401` berarti token tidak ada atau tidak valid/kedaluwarsa, `404` berarti pengguna tidak ditemukan, dan `500` menandakan kegagalan server.
+
+### Persyaratan form edit profil
+
+- Ambil profil dengan `GET /profile` saat halaman dibuka, lalu gunakan `first_name`, `last_name`, `phone`, dan `about` untuk mengisi nilai awal form.
+- `username` dan `email` hanya ditampilkan sebagai informasi; keduanya tidak dapat diubah lewat endpoint ini.
+- Simpan empat field berikut sebagai string dan kirim semuanya pada `POST /profile`:
+
+  ```json
+  {
+    "first_name": "Jane",
+    "last_name": "Doe",
+    "phone": "08123456789",
+    "about": "Hello, I'm Jane."
+  }
+  ```
+
+- Semua field wajib diisi dan tidak boleh berupa string kosong. Validasi ini diperlukan terutama untuk `about`; backend belum menerima nilai kosong untuk menghapus isinya. Tidak ada aturan format atau panjang khusus untuk `phone` di endpoint update selain wajib diisi.
+- Gunakan access token saat memanggil endpoint. Tampilkan status loading dan cegah submit berulang selama request berlangsung. Jika berhasil (`200`), gunakan `data` dari respons sebagai profil terbaru di state aplikasi.
+- Cegah pengiriman jika semua field sama dengan nilai awal. Backend mengembalikan `500` untuk profil yang tidak berubah, bukan status khusus.
+- Jika gagal, pertahankan input yang sudah diketik dan tampilkan umpan balik: `400` untuk body/field tidak valid, `401` untuk sesi tidak valid (jalankan alur refresh/login aplikasi), `404` jika profil tidak ditemukan, dan `500` untuk kegagalan server.
+
+Contoh fungsi client:
+
+```js
+export function updateProfile(accessToken, profile) {
+  const { first_name, last_name, phone, about } = profile;
+  return apiRequest("/profile", {
+    method: "POST",
+    token: accessToken,
+    body: JSON.stringify({ first_name, last_name, phone, about }),
+  });
+}
+```
 
 React state di memory hilang saat reload. Jika aplikasi perlu memulihkan sesi setelah reload, tentukan strategi penyimpanan token yang sesuai dengan threat model aplikasi. Jangan mencatat token ke console, analytics, URL, atau error reporting.
 
