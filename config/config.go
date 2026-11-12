@@ -19,6 +19,7 @@ type Config struct {
 	APP_CONFIG              AppConfig
 	CORS_CONFIG             CORSConfig
 	SECURITY_CONFIG         ConfigSecurity
+	S3_CONFIG               S3Config
 }
 type AppConfig struct {
 	APP_PORT string
@@ -40,6 +41,14 @@ type ConfigSecurity struct {
 	ExpireRefreshToken time.Duration
 	JwtSecret          string
 	IssuerSecretJwt    string
+}
+
+type S3Config struct {
+	EndpointURL     string
+	Region          string
+	AccessKeyID     string
+	SecretAccessKey string
+	Bucket          string
 }
 
 func LoadConfig() *Config {
@@ -76,6 +85,13 @@ func LoadConfig() *Config {
 			ExpireRefreshToken: utils.GetEnvAsDuration("EXPIRE_REFRESH_TOKEN", 24),
 			JwtSecret:          utils.GetEnv("JWT_SECRET_KEY", "oDkdW2klaug+ehDRH2CxfQ=="),
 			IssuerSecretJwt:    utils.GetEnv("ISSUER_SECRET_JWT", "xxx-xxx--xxx--xx"),
+		},
+		S3_CONFIG: S3Config{
+			EndpointURL:     utils.GetEnv("S3_ENDPOINT_URL", "http://127.0.0.1:9003"),
+			Region:          utils.GetEnv("S3_REGION", "us-east-1"),
+			AccessKeyID:     utils.GetEnv("S3_ACCESS_KEY_ID", "xxxx-xxxx"),
+			SecretAccessKey: utils.GetEnv("S3_SECRET_ACCESS_KEY", "xxx-xxx"),
+			Bucket:          utils.GetEnv("S3_BUCKET", "xxxx-xxxx"),
 		},
 	}
 }

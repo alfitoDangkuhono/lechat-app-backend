@@ -19,13 +19,18 @@ import (
 type AuthenticationController struct {
 	iauthentication interfaces.IAuthentications
 	ijwt            interfaces.IJwtInterface
+	avatarService   interfaces.IAvatarService
 }
 
-func NewAuthenticationController(iauthentication interfaces.IAuthentications, ijwt interfaces.IJwtInterface) *AuthenticationController {
-	return &AuthenticationController{
+func NewAuthenticationController(iauthentication interfaces.IAuthentications, ijwt interfaces.IJwtInterface, avatarServices ...interfaces.IAvatarService) *AuthenticationController {
+	controller := &AuthenticationController{
 		iauthentication: iauthentication,
 		ijwt:            ijwt,
 	}
+	if len(avatarServices) > 0 {
+		controller.avatarService = avatarServices[0]
+	}
+	return controller
 }
 
 func (c *AuthenticationController) Register(ctx *gin.Context) {
@@ -162,6 +167,20 @@ func (c *AuthenticationController) Profile(ctx *gin.Context) {
 		}
 		utils.ErrorResponse(ctx, http.StatusInternalServerError, constant.ErrInternalServer, nil)
 		return
+	}
+
+	if profile.AvatarURL != nil && *profile.AvatarURL != "" {
+		if c.avatarService == nil {
+			utils.ErrorResponse(ctx, http.StatusInternalServerError, constant.ErrInternalServer, nil)
+			return
+		}
+		avatarURL, err := c.avatarService.CreateDownloadURL(ctx.Request.Context(), claims.UserId)
+		if err != nil {
+			utils.ErrorResponse(ctx, http.StatusInternalServerError, constant.ErrInternalServer, nil)
+			return
+		}
+		profile.AvatarURL = &avatarURL.DownloadURL
+		profile.AvatarURLExpiresIn = avatarURL.ExpiresIn
 	}
 
 	utils.SuccessResponse(ctx, http.StatusOK, profile)

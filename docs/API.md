@@ -42,6 +42,8 @@ Protected endpoints return `401` if the token is missing, invalid, expired, or r
 | `GET` | `/sessions/check-session` | Access token | Check the current authenticated session |
 | `GET` | `/profile` | Access token | Get the current user's profile |
 | `POST` | `/profile` | Access token | Update the current user's profile |
+| `POST` | `/profile/avatar/upload-url` | Access token | Create a presigned avatar upload URL and save its S3 object key |
+| `GET` | `/profile/avatar/download-url` | Access token | Create a short-lived URL for the current user's avatar |
 
 ### Register — `POST /registers`
 
@@ -95,6 +97,8 @@ Send the access token in the `Authorization` header. The profile belongs to the 
     "last_name": "Doe",
     "phone": "08123456789",
     "about": "Hello, I'm Jane.",
+    "avatar_url": "https://s3.example/...",
+    "avatar_url_expires_in": 900,
     "created_at": "2026-11-03T10:00:00Z",
     "updated_at": "2026-11-03T10:00:00Z"
   }
@@ -121,6 +125,99 @@ Content-Type: application/json
 ```
 
 `first_name`, `last_name`, `phone`, and `about` must all be non-empty strings. On success, the response is `200` with the updated profile in `data` (including read-only `id`, `username`, and `email`). Missing or invalid JSON fields return `400`; missing or invalid access tokens return `401`; an internal update failure returns `500`. The frontend should prevent submitting an unchanged profile: the current backend reports that case as `500`, not as a dedicated validation/conflict response.
+
+### Upload and display a profile avatar
+
+The database column `users.avatar_url` stores the private S3 object key, not a public URL. The column already exists in the users migration. `GET /profile` signs that key and returns a short-lived URL as `avatar_url` (or `null` if there is no avatar); the object key is not returned to the frontend. The URL is valid for 15 minutes, as indicated by `avatar_url_expires_in`.
+
+1. Request an upload URL using the authenticated user's access token:
+
+   ```http
+   POST /api/v1/profile/avatar/upload-url
+   Authorization: Bearer <access-token>
+   Content-Type: application/json
+   ```
+
+   ```json
+   {
+     "content_type": "image/png"
+   }
+   ```
+
+   Only `image/jpeg`, `image/png`, and `image/webp` are accepted. The API generates a user-scoped object key and stores it in `users.avatar_url`. The response is valid for 15 minutes:
+
+   ```json
+   {
+     "code": 200,
+     "message": "success",
+     "data": {
+       "upload_url": "https://s3.example/...",
+       "method": "PUT",
+       "headers": {
+         "Content-Type": "image/png"
+       },
+       "avatar_url": "avatars/42/9e266a6e3b094fb48af6151ec6ee7d2c.png",
+       "expires_in": 900
+     }
+   }
+   ```
+
+2. Upload the raw image bytes directly to `upload_url` using the returned `method` and `headers`. Do not send the file as multipart form data to the backend:
+
+   ```http
+   PUT <upload_url>
+   Content-Type: image/png
+
+   <raw image bytes>
+   ```
+
+   The signed headers must be sent exactly as returned. A successful S3 response is typically `200`. The browser must be allowed by the S3 bucket's CORS policy to send `PUT` with `Content-Type`.
+
+   The backend's `CORS_ALLOW_ORIGINS` only controls requests to this API; it does not configure the object-storage server. For RustFS, set the S3 API's allowed browser origins in the RustFS server environment and restart RustFS:
+
+   ```env
+   RUSTFS_CORS_ALLOWED_ORIGINS=http://localhost:5173
+   ```
+
+   Use the exact frontend origin (scheme, hostname, and port), without a trailing slash. Multiple RustFS origins can be comma-separated. RustFS documents this setting at [CORS Configuration](https://docs.rustfs.com/en/administration/cors). Do not confuse it with `RUSTFS_CONSOLE_CORS_ALLOWED_ORIGINS`, which applies to the RustFS Console.
+
+   For AWS S3 or another S3-compatible service configured with bucket-level CORS, use a rule such as:
+
+   ```json
+   {
+     "CORSRules": [
+       {
+         "AllowedOrigins": ["http://localhost:5173"],
+         "AllowedMethods": ["GET", "PUT", "HEAD"],
+         "AllowedHeaders": ["*"],
+         "ExposeHeaders": ["ETag"],
+         "MaxAgeSeconds": 3000
+       }
+     ]
+   }
+   ```
+
+   Set that rule on the bucket used by `S3_BUCKET`. The browser's preflight `OPTIONS` response must contain `Access-Control-Allow-Origin`, `Access-Control-Allow-Methods` including `PUT`, and `Access-Control-Allow-Headers` permitting `content-type`.
+
+3. Use `data.avatar_url` from `GET /profile` directly as the image `src`. When that URL expires, request a fresh private download URL:
+
+   ```http
+   GET /api/v1/profile/avatar/download-url
+   Authorization: Bearer <access-token>
+   ```
+
+   ```json
+   {
+     "code": 200,
+     "message": "success",
+     "data": {
+       "download_url": "https://s3.example/...",
+       "expires_in": 900
+     }
+   }
+   ```
+
+The profile and download URLs expire after 15 minutes; do not persist them. Refresh an expired URL through the download URL endpoint or by requesting `GET /profile` again. The upload path is saved when the upload URL is issued, so an abandoned or failed S3 upload can leave the database pointing to an object that does not exist until the upload is retried. Unsupported content types return `400`; missing profile/avatar returns `404`; invalid authentication returns `401`.
 
 ## Contacts
 

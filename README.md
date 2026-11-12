@@ -33,6 +33,12 @@ CORS_EXPOSE_HEADERS=Content-Length
 CORS_ALLOW_CREDENTIALS=true
 CORS_MAX_AGE=12h
 
+S3_ENDPOINT_URL=http://127.0.0.1:9003
+S3_REGION=us-east-1
+S3_ACCESS_KEY_ID=replace-with-access-key
+S3_SECRET_ACCESS_KEY=replace-with-secret-key
+S3_BUCKET=lechat
+
 OTEL_SERVICE_NAME=lechat-backend
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
 DB_SLOW_QUERY_THRESHOLD=200ms
@@ -47,6 +53,8 @@ Aplikasi mengirim traces dan metrics menggunakan OTLP over HTTP. Jalankan OpenTe
 Instrumentasi mencakup trace request Gin dan operasi GORM (query, create, update, delete, row, dan raw), metrik jumlah/durasi/status HTTP, durasi/jumlah/error operasi database, slow query, serta penggunaan dan waktu tunggu connection pool. Atribut metrik menggunakan route, jenis operasi, dan tabel; SQL beserta nilai parameter tidak ditambahkan ke span atau metrik.
 
 `DB_SLOW_QUERY_THRESHOLD` mengatur ambang slow query untuk log GORM dan metrik OpenTelemetry, dengan default `200ms`. Setel sebagai durasi Go, misalnya `500ms` atau `1s`.
+
+Foto profil menggunakan presigned URL S3/MinIO. `S3_ENDPOINT_URL` harus berupa endpoint HTTP/HTTPS; konfigurasi default menggunakan path-style untuk layanan S3-compatible lokal. Simpan bucket sebagai private dan atur CORS bucket agar origin frontend dapat melakukan `PUT`/`GET` dengan header `Content-Type`. Ikuti kontrak dan urutan upload di [docs/API.md](./docs/API.md) dan contoh React di [docs/REACT_INTEGRATION.md](./docs/REACT_INTEGRATION.md).
 
 ## Database
 
