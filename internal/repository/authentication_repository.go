@@ -40,10 +40,23 @@ func (r *AuthenticationRepository) FindEmailLogin(email string) (dto.LoginDto, e
 func (r *AuthenticationRepository) FindProfile(userID uint) (dto.ProfileDto, error) {
 	var profile dto.ProfileDto
 	err := r.db.Model(&models.Users{}).
-		Select("id", "username", "email", "first_name", "last_name", "phone", "created_at", "updated_at", "about").
+		Select("id", "username", "email", "first_name", "last_name", "phone", "created_at", "updated_at", "about", "avatar_url").
 		Where("id = ?", userID).
 		Take(&profile).Error
 	return profile, err
+}
+
+func (r *AuthenticationRepository) UpdateAvatarURL(userID uint, avatarURL string) error {
+	result := r.db.Model(&models.Users{}).
+		Where("id = ?", userID).
+		Update("avatar_url", avatarURL)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func (r *AuthenticationRepository) UpdateProfile(UserId uint, req request.ProfileRequest) (dto.ProfileDto, error) {
@@ -62,7 +75,7 @@ func (r *AuthenticationRepository) UpdateProfile(UserId uint, req request.Profil
 	}
 
 	err = r.db.Model(&models.Users{}).
-		Select("id", "username", "email", "first_name", "last_name", "phone", "created_at", "updated_at", "about").
+		Select("id", "username", "email", "first_name", "last_name", "phone", "created_at", "updated_at", "about", "avatar_url").
 		Where("id = ?", UserId).
 		Take(&profile).Error
 

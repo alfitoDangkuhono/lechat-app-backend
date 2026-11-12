@@ -16,6 +16,7 @@ import (
 	"lechat-backend/internal/database/dto"
 	"lechat-backend/internal/database/models"
 	"lechat-backend/internal/helpers"
+	"lechat-backend/internal/interfaces"
 	"lechat-backend/internal/request"
 	"lechat-backend/internal/services"
 	"lechat-backend/utils"
@@ -200,10 +201,10 @@ func logoutRequest(auth *authenticationStub, jwt *jwtStub, authorization string)
 	return recorder
 }
 
-func profileRequest(auth *authenticationStub, jwt *jwtStub, authorization string) *httptest.ResponseRecorder {
+func profileRequest(auth *authenticationStub, jwt *jwtStub, authorization string, avatarServices ...interfaces.IAvatarService) *httptest.ResponseRecorder {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
-	routes.Routes(router, controllers.NewAuthenticationController(auth, jwt), jwt)
+	routes.Routes(router, controllers.NewAuthenticationController(auth, jwt, avatarServices...), jwt)
 
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/profile", nil)

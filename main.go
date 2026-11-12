@@ -10,6 +10,7 @@ import (
 	"lechat-backend/internal/observability"
 	"lechat-backend/internal/repository"
 	"lechat-backend/internal/services"
+	"lechat-backend/internal/storage"
 	"lechat-backend/utils"
 	"net/http"
 	"os"
@@ -30,6 +31,10 @@ func main() {
 
 	appLogger := utils.NewLogger()
 	config := config.LoadConfig()
+	s3Storage, err := storage.NewS3StorageFromConfig(config.S3_CONFIG)
+	if err != nil {
+		helpers.IsPanic("failed to initialize S3 storage", err)
+	}
 	shutdownTelemetry, err := observability.Init(context.Background())
 	if err != nil {
 		helpers.IsPanic("failed to initialize OpenTelemetry", err)
@@ -76,11 +81,13 @@ func main() {
 	// services
 	jwtService := services.NewJwtService(tokenRevocationRepository)
 	authenticationService := services.NewAuthenticationService(authenticationRepository)
+	avatarService := services.NewAvatarService(authenticationRepository, s3Storage)
 	chatService := services.NewChatService(chatRepository)
 	contactService := services.NewContactService(contactRepository)
 	realtimeHub := services.NewRealtimeHub()
 	// Controllers
-	authenticationController := controllers.NewAuthenticationController(authenticationService, jwtService)
+	authenticationController := controllers.NewAuthenticationController(authenticationService, jwtService, avatarService)
+	avatarController := controllers.NewAvatarController(avatarService)
 	chatController := controllers.NewChatController(chatService, realtimeHub)
 	contactController := controllers.NewContactController(contactService)
 	realtimeController := controllers.NewRealtimeController(
@@ -91,6 +98,7 @@ func main() {
 	)
 	// Routes
 	routes.Routes(router, authenticationController, jwtService, chatController)
+	routes.ProfileAvatarRoutes(router, jwtService, avatarController)
 	routes.ContactRoutes(router, jwtService, contactController)
 	routes.RealtimeRoutes(router, realtimeController)
 

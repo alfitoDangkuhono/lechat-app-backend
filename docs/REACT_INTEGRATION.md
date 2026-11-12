@@ -167,13 +167,74 @@ Contoh respons endpoint:
     "last_name": "Doe",
     "phone": "08123456789",
     "about": "Hello, I'm Jane.",
+    "avatar_url": "https://s3.example/...",
+    "avatar_url_expires_in": 900,
     "created_at": "2026-11-03T10:00:00Z",
     "updated_at": "2026-11-03T10:00:00Z"
   }
 }
 ```
 
-Profil selalu untuk pengguna dari token; endpoint ini tidak menerima `user_id` atau body. `401` berarti token tidak ada atau tidak valid/kedaluwarsa, `404` berarti pengguna tidak ditemukan, dan `500` menandakan kegagalan server.
+Profil selalu untuk pengguna dari token; endpoint ini tidak menerima `user_id` atau body. Jika avatar tersedia, `avatar_url` berisi URL presigned yang dapat dipakai langsung sebagai `img src` dan `avatar_url_expires_in` berisi masa berlakunya dalam detik (900). Jika tidak ada avatar, `avatar_url` bernilai `null`. `401` berarti token tidak ada atau tidak valid/kedaluwarsa, `404` berarti pengguna tidak ditemukan, dan `500` menandakan kegagalan server.
+
+```jsx
+{profile.avatar_url && (
+  <img src={profile.avatar_url} alt="Foto profil" />
+)}
+```
+
+### Upload dan menampilkan foto profil
+
+Database menyimpan **object key** S3 pada `users.avatar_url`. Respons API profil menandatangani key tersebut dan mengirim URL sementara sebagai `avatar_url`, sehingga dapat langsung dipakai sebagai `src`. Backend membuat key sendiri berdasarkan user yang sedang login; frontend tidak mengirim nama file atau key.
+
+1. Minta URL upload dengan tipe file yang didukung:
+
+   ```js
+   export function createAvatarUpload(accessToken, file) {
+     return apiRequest("/profile/avatar/upload-url", {
+       method: "POST",
+       token: accessToken,
+       body: JSON.stringify({ content_type: file.type }),
+     });
+   }
+   ```
+
+   `content_type` hanya boleh `image/jpeg`, `image/png`, atau `image/webp`. Response `data` berisi `upload_url`, `method`, `headers`, `avatar_url`, dan `expires_in` (900 detik). Key disimpan ke `users.avatar_url` oleh backend saat URL dibuat.
+
+2. Kirim file langsung ke storage, bukan ke API backend. Gunakan raw `File` sebagai body (bukan `FormData`) dan pakai URL, method, serta headers yang dikembalikan:
+
+   ```js
+   export async function putAvatar(upload, file) {
+     const response = await fetch(upload.upload_url, {
+       method: upload.method,
+       headers: upload.headers,
+       body: file,
+     });
+     if (!response.ok) {
+       throw new Error(`Upload avatar gagal: HTTP ${response.status}`);
+     }
+   }
+
+   const upload = await createAvatarUpload(accessToken, file);
+   await putAvatar(upload, file);
+   ```
+
+   S3/MinIO harus dikonfigurasi agar CORS mengizinkan origin frontend, method `PUT`, dan header `Content-Type`. Jangan mengubah header signed yang dikembalikan. Jika upload gagal atau URL kedaluwarsa, minta upload URL baru; path database diubah ketika URL baru dibuat.
+
+3. Untuk memperoleh URL baru setelah URL dari `GET /profile` kedaluwarsa, minta URL download dan gunakan sebagai `src`:
+
+   ```js
+   export function getAvatarDownload(accessToken) {
+     return apiRequest("/profile/avatar/download-url", {
+       token: accessToken,
+     });
+   }
+
+   const { download_url } = await getAvatarDownload(accessToken);
+   // <img src={download_url} alt="Foto profil" />
+   ```
+
+   Download URL juga berlaku 15 menit. Jangan simpan URL ini sebagai data profil atau ke database; panggil endpoint lagi jika URL kedaluwarsa. `404` berarti avatar belum dipasang atau user tidak ditemukan. Jangan gunakan `avatar_url` object key dari respons upload sebagai URL gambar; gunakan `avatar_url` dari `GET /profile` atau `download_url` dari endpoint download.
 
 ### Persyaratan form edit profil
 
@@ -489,7 +550,7 @@ function sendText(send, conversationId, body, replyToMessageId = null) {
 
 Untuk mempertahankan idempotency saat retry, simpan frame pending (terutama `client_message_id`) sampai server mengirim `message.created` yang cocok atau history mengonfirmasi pesan tersimpan. Jangan membuat UUID baru untuk retry pesan yang sama.
 
-Backend saat ini hanya mendukung pesan teks non-kosong. Walaupun beberapa enum request memuat tipe media, upload dan pengiriman media belum tersedia.
+Backend saat ini hanya mendukung pesan teks non-kosong. Upload foto profil tersedia melalui presigned URL, tetapi upload dan pengiriman media chat belum tersedia.
 
 ### History dan pagination melalui WebSocket
 
@@ -565,4 +626,4 @@ Contoh di atas adalah skeleton integrasi, bukan state management lengkap. Untuk 
 - [ ] Implementasikan retry WS dengan backoff, re-auth, join ulang, dan sinkronisasi history.
 - [ ] Pertahankan `client_message_id` yang sama untuk retry kirim pesan.
 - [ ] Tampilkan loading, empty, offline, auth-expired, forbidden, conflict, dan error state.
-- [ ] Jangan mengaktifkan UI upload media seolah-olah didukung; backend belum menyediakan upload storage.
+- [ ] Jangan mengaktifkan UI upload media chat seolah-olah didukung; backend belum menyediakan upload storage untuk pesan.
