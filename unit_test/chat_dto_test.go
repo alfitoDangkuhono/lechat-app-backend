@@ -1,8 +1,10 @@
-package dto
+package controllers_test
 
 import (
 	"encoding/json"
 	"testing"
+
+	"lechat-backend/internal/database/dto"
 )
 
 func TestMessageDtoMarshalsReplySummary(t *testing.T) {
@@ -12,10 +14,10 @@ func TestMessageDtoMarshalsReplySummary(t *testing.T) {
 	body := "Original message"
 	messageType := "text"
 	isDeleted := false
-	message, err := json.Marshal(MessageDto{
+	message, err := json.Marshal(dto.MessageDto{
 		ID:               "123e4567-e89b-12d3-a456-426614174004",
 		ReplyToMessageID: &replyID,
-		ReplyTo: &MessageReplyDto{
+		ReplyTo: &dto.MessageReplyDto{
 			ID:        replyID,
 			SenderID:  19,
 			Username:  "andi",
@@ -50,7 +52,7 @@ func TestMessageDtoMarshalsReplySummary(t *testing.T) {
 }
 
 func TestMessageDtoMarshalsReceiptStatus(t *testing.T) {
-	message, err := json.Marshal(MessageDto{
+	message, err := json.Marshal(dto.MessageDto{
 		ID:            "123e4567-e89b-12d3-a456-426614174004",
 		ReceiptStatus: "read",
 	})
