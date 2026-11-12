@@ -11,4 +11,5 @@ type ProfileDto struct {
 	Phone     string    `json:"phone"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	About     string    `json:"about"`
 }

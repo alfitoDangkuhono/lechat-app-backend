@@ -20,6 +20,7 @@ func Routes(router *gin.Engine, authenticationController *controllers.Authentica
 	authenticated.DELETE("/sessions", authenticationController.Logout)
 	authenticated.GET("/sessions/check-session", authenticationController.CheckSession)
 	authenticated.GET("/profile", authenticationController.Profile)
+	authenticated.POST("/profile", authenticationController.UpdateProfile)
 	if len(chatControllers) > 0 && chatControllers[0] != nil {
 		chatController := chatControllers[0]
 		authenticated.POST("/conversations", chatController.CreateConversation)

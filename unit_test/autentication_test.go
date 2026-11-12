@@ -26,19 +26,24 @@ import (
 )
 
 type authenticationStub struct {
-	user          models.Users
-	err           error
-	calls         int
-	req           request.AddUserRequest
-	login         dto.LoginDto
-	loginErr      error
-	loginCalls    int
-	loginEmail    string
-	loginPassword string
-	profile       dto.ProfileDto
-	profileErr    error
-	profileCalls  int
-	profileUserID uint
+	user                 models.Users
+	err                  error
+	calls                int
+	req                  request.AddUserRequest
+	login                dto.LoginDto
+	loginErr             error
+	loginCalls           int
+	loginEmail           string
+	loginPassword        string
+	profile              dto.ProfileDto
+	profileErr           error
+	profileCalls         int
+	profileUserID        uint
+	updatedProfile       dto.ProfileDto
+	updateProfileErr     error
+	updateProfileCalls   int
+	updateProfileUserID  uint
+	updateProfileRequest request.ProfileRequest
 }
 
 func (s *authenticationStub) Registration(req request.AddUserRequest) (models.Users, error) {
@@ -58,6 +63,13 @@ func (s *authenticationStub) GetProfile(userID uint) (dto.ProfileDto, error) {
 	s.profileCalls++
 	s.profileUserID = userID
 	return s.profile, s.profileErr
+}
+
+func (s *authenticationStub) UpdateProfile(userID uint, req request.ProfileRequest) (dto.ProfileDto, error) {
+	s.updateProfileCalls++
+	s.updateProfileUserID = userID
+	s.updateProfileRequest = req
+	return s.updatedProfile, s.updateProfileErr
 }
 
 type jwtStub struct {
@@ -195,6 +207,21 @@ func profileRequest(auth *authenticationStub, jwt *jwtStub, authorization string
 
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/profile", nil)
+	if authorization != "" {
+		req.Header.Set("Authorization", authorization)
+	}
+	router.ServeHTTP(recorder, req)
+	return recorder
+}
+
+func updateProfileRequest(body string, auth *authenticationStub, jwt *jwtStub, authorization string) *httptest.ResponseRecorder {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	routes.Routes(router, controllers.NewAuthenticationController(auth, jwt), jwt)
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/profile", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
 	if authorization != "" {
 		req.Header.Set("Authorization", authorization)
 	}
@@ -801,6 +828,111 @@ func TestProfileReturnsInternalServerErrorWhenLookupFails(t *testing.T) {
 	jwt := &jwtStub{claims: &models.JwtClaims{UserId: 42}}
 
 	recorder := profileRequest(auth, jwt, "Bearer valid-token")
+
+	if recorder.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusInternalServerError, recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestUpdateProfileSuccess(t *testing.T) {
+	auth := &authenticationStub{
+		updatedProfile: dto.ProfileDto{
+			Id:        42,
+			Username:  "jane",
+			Email:     "jane@example.com",
+			FirstName: "Jane",
+			LastName:  "Doe",
+			Phone:     "08123456789",
+			About:     "Hello!",
+		},
+	}
+	jwtService := &jwtStub{claims: &models.JwtClaims{UserId: 42}}
+	body := `{"first_name":"Jane","last_name":"Doe","phone":"08123456789","about":"Hello!"}`
+
+	recorder := updateProfileRequest(body, auth, jwtService, "Bearer valid-token")
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, recorder.Code, recorder.Body.String())
+	}
+	var response utils.Response
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data, ok := response.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected profile object in response, got %#v", response.Data)
+	}
+	if response.Message != "success" ||
+		data["id"] != float64(42) ||
+		data["first_name"] != "Jane" ||
+		data["last_name"] != "Doe" ||
+		data["phone"] != "08123456789" ||
+		data["about"] != "Hello!" {
+		t.Errorf("unexpected updated profile response: %#v", response)
+	}
+	if auth.updateProfileCalls != 1 || auth.updateProfileUserID != 42 {
+		t.Errorf("expected profile update for authenticated user 42, got calls=%d userID=%d", auth.updateProfileCalls, auth.updateProfileUserID)
+	}
+	if auth.updateProfileRequest != (request.ProfileRequest{
+		FirstName: "Jane",
+		LastName:  "Doe",
+		Phone:     "08123456789",
+		About:     "Hello!",
+	}) {
+		t.Errorf("unexpected update request: %#v", auth.updateProfileRequest)
+	}
+}
+
+func TestUpdateProfileRequiresValidBearerToken(t *testing.T) {
+	auth := &authenticationStub{}
+	jwtService := &jwtStub{claims: &models.JwtClaims{UserId: 42}}
+	body := `{"first_name":"Jane","last_name":"Doe","phone":"08123456789","about":"Hello!"}`
+
+	recorder := updateProfileRequest(body, auth, jwtService, "")
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusUnauthorized, recorder.Code, recorder.Body.String())
+	}
+	if auth.updateProfileCalls != 0 || jwtService.validateCall != 0 {
+		t.Errorf("profile update must not run without authorization: update calls=%d validation calls=%d", auth.updateProfileCalls, jwtService.validateCall)
+	}
+}
+
+func TestUpdateProfileRejectsInvalidRequest(t *testing.T) {
+	auth := &authenticationStub{}
+	jwtService := &jwtStub{claims: &models.JwtClaims{UserId: 42}}
+
+	recorder := updateProfileRequest(`{"first_name":"Jane"}`, auth, jwtService, "Bearer valid-token")
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	}
+	if auth.updateProfileCalls != 0 {
+		t.Errorf("profile update must not run for invalid input, got %d calls", auth.updateProfileCalls)
+	}
+}
+
+func TestUpdateProfileReturnsNotFoundWhenUserDoesNotExist(t *testing.T) {
+	auth := &authenticationStub{updateProfileErr: gorm.ErrRecordNotFound}
+	jwtService := &jwtStub{claims: &models.JwtClaims{UserId: 404}}
+	body := `{"first_name":"Jane","last_name":"Doe","phone":"08123456789","about":"Hello!"}`
+
+	recorder := updateProfileRequest(body, auth, jwtService, "Bearer valid-token")
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusNotFound, recorder.Code, recorder.Body.String())
+	}
+	if auth.updateProfileCalls != 1 || auth.updateProfileUserID != 404 {
+		t.Errorf("expected update attempt for user 404, got calls=%d userID=%d", auth.updateProfileCalls, auth.updateProfileUserID)
+	}
+}
+
+func TestUpdateProfileReturnsInternalServerErrorWhenUpdateFails(t *testing.T) {
+	auth := &authenticationStub{updateProfileErr: errors.New("database unavailable")}
+	jwtService := &jwtStub{claims: &models.JwtClaims{UserId: 42}}
+	body := `{"first_name":"Jane","last_name":"Doe","phone":"08123456789","about":"Hello!"}`
+
+	recorder := updateProfileRequest(body, auth, jwtService, "Bearer valid-token")
 
 	if recorder.Code != http.StatusInternalServerError {
 		t.Fatalf("expected status %d, got %d: %s", http.StatusInternalServerError, recorder.Code, recorder.Body.String())

@@ -10,4 +10,5 @@ type IAuthentications interface {
 	Registration(req request.AddUserRequest) (models.Users, error)
 	CredentialLogin(email string, password string) (dto.LoginDto, error)
 	GetProfile(userID uint) (dto.ProfileDto, error)
+	UpdateProfile(UserId uint, req request.ProfileRequest) (dto.ProfileDto, error)
 }

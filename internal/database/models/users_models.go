@@ -10,6 +10,7 @@ type Users struct {
 	FirstName string    `json:"first_name"`
 	LastName  string    `json:"last_name"`
 	Phone     string    `json:"phone"`
+	About     string    `json:"about"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
