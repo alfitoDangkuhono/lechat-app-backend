@@ -38,9 +38,11 @@ func TestChatQueryModelsMapDatabaseColumns(t *testing.T) {
 			columns: []string{"type", "role"},
 		},
 		{
-			name:    "message mutation state",
-			model:   MessageMutationState{},
-			columns: []string{"sender_id", "deleted_at"},
+			name:  "message mutation state",
+			model: MessageMutationState{},
+			columns: []string{
+				"sender_id", "encryption_version", "deleted_at",
+			},
 		},
 		{
 			name:    "message conversation reference",

@@ -1,10 +1,13 @@
 package services
 
 import (
+	"encoding/base64"
 	"math"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"lechat-backend/internal/constant"
 	"lechat-backend/internal/database/dto"
@@ -13,14 +16,64 @@ import (
 	"lechat-backend/internal/request"
 )
 
-var groupInvitationUUIDPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+
+const (
+	gcmNonceSize        = 12
+	maxCiphertextBytes  = 48 * 1024
+	sendMessageWindow   = 10 * time.Second
+	sendMessageMaxBurst = 30
+)
 
 type ChatService struct {
 	chatRepository *repository.ChatRepository
+	sendLimiter    *messageRateLimiter
 }
 
 func NewChatService(chatRepository *repository.ChatRepository) interfaces.IChat {
-	return &ChatService{chatRepository: chatRepository}
+	return &ChatService{
+		chatRepository: chatRepository,
+		sendLimiter:    newMessageRateLimiter(sendMessageWindow, sendMessageMaxBurst),
+	}
+}
+
+type messageRateLimiter struct {
+	mu      sync.Mutex
+	window  time.Duration
+	limit   int
+	buckets map[uint]*rateBucket
+}
+
+type rateBucket struct {
+	count int
+	reset time.Time
+}
+
+func newMessageRateLimiter(window time.Duration, limit int) *messageRateLimiter {
+	return &messageRateLimiter{
+		window:  window,
+		limit:   limit,
+		buckets: make(map[uint]*rateBucket),
+	}
+}
+
+func (l *messageRateLimiter) allow(userID uint) bool {
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	bucket, ok := l.buckets[userID]
+	if !ok || now.After(bucket.reset) {
+		if len(l.buckets) >= 100_000 {
+			l.buckets = make(map[uint]*rateBucket, len(l.buckets)/2+1)
+		}
+		bucket = &rateBucket{reset: now.Add(l.window)}
+		l.buckets[userID] = bucket
+	}
+	if bucket.count >= l.limit {
+		return false
+	}
+	bucket.count++
+	return true
 }
 
 func (s *ChatService) CreateConversation(userID uint, req request.CreateConversationRequest) (dto.ConversationCreationDto, error) {
@@ -95,13 +148,80 @@ func (s *ChatService) SendMessage(userID uint, conversationID string, req reques
 	if req.Type != "text" {
 		return dto.MessageDto{}, constant.ErrChatInvalidRequest
 	}
-	if req.Type == "text" && strings.TrimSpace(req.Body) == "" {
+	hasBody := strings.TrimSpace(req.Body) != ""
+	hasEncryption := req.EncryptionVersion != nil || req.Ciphertext != nil || req.IV != nil
+	if !hasBody && !hasEncryption {
 		return dto.MessageDto{}, constant.ErrChatInvalidRequest
 	}
-	if req.ReplyToMessageID != nil && !groupInvitationUUIDPattern.MatchString(*req.ReplyToMessageID) {
+	if req.ReplyToMessageID != nil && !uuidPattern.MatchString(*req.ReplyToMessageID) {
 		return dto.MessageDto{}, constant.ErrChatInvalidReply
 	}
+
+	// Conversation type is resolved from the database, never trusted from the client payload.
+	conversationType, err := s.chatRepository.ConversationType(userID, conversationID)
+	if err != nil {
+		return dto.MessageDto{}, err
+	}
+
+	switch conversationType {
+	case "direct":
+		if err := validateDirectEncryptedMessage(req, hasBody); err != nil {
+			return dto.MessageDto{}, err
+		}
+	case "group":
+		if hasEncryption {
+			return dto.MessageDto{}, constant.ErrChatGroupEncrypted
+		}
+	default:
+		return dto.MessageDto{}, constant.ErrChatInvalidRequest
+	}
+
+	if !s.sendLimiter.allow(userID) {
+		return dto.MessageDto{}, constant.ErrRateLimited
+	}
 	return s.chatRepository.SendMessage(userID, conversationID, req)
+}
+
+// canonicalBase64 rejects non-canonical input (missing padding, base64url
+// alphabet, dirty trailing bits) so ciphertext/IV round-trip byte-identically.
+var canonicalBase64 = base64.StdEncoding.Strict()
+
+func validateDirectEncryptedMessage(req request.SendMessageRequest, hasBody bool) error {
+	if hasBody {
+		return constant.ErrChatEncryptionRequired
+	}
+	if req.EncryptionVersion == nil || *req.EncryptionVersion != 1 ||
+		req.Ciphertext == nil || strings.TrimSpace(*req.Ciphertext) == "" ||
+		req.IV == nil || strings.TrimSpace(*req.IV) == "" {
+		return constant.ErrChatEncryptionRequired
+	}
+	ciphertext, err := canonicalBase64.DecodeString(*req.Ciphertext)
+	if err != nil {
+		return constant.ErrChatInvalidRequest
+	}
+	if len(ciphertext) < 16 || len(ciphertext) > maxCiphertextBytes {
+		if len(ciphertext) > maxCiphertextBytes {
+			return constant.ErrPayloadTooLarge
+		}
+		return constant.ErrChatInvalidRequest
+	}
+	iv, err := canonicalBase64.DecodeString(*req.IV)
+	if err != nil || len(iv) != gcmNonceSize {
+		return constant.ErrChatInvalidRequest
+	}
+	return nil
+}
+
+func (s *ChatService) AckMessages(userID uint, conversationID string, req request.AckMessagesRequest) error {
+	if len(req.IDs) == 0 {
+		return constant.ErrChatInvalidRequest
+	}
+	for _, id := range req.IDs {
+		if !uuidPattern.MatchString(id) {
+			return constant.ErrChatInvalidRequest
+		}
+	}
+	return s.chatRepository.AckMessages(userID, conversationID, req)
 }
 
 func (s *ChatService) MarkRead(userID uint, conversationID string, req request.MarkReadRequest) (dto.ReadReceiptDto, error) {
@@ -135,7 +255,7 @@ func (s *ChatService) ListGroupInvitations(userID uint) ([]dto.GroupInvitationDt
 }
 
 func (s *ChatService) RespondToGroupInvitation(userID uint, invitationID string, accept bool) (dto.MembershipDto, error) {
-	if !groupInvitationUUIDPattern.MatchString(invitationID) {
+	if !uuidPattern.MatchString(invitationID) {
 		return dto.MembershipDto{}, constant.ErrChatInvalidRequest
 	}
 	return s.chatRepository.RespondToGroupInvitation(userID, invitationID, accept)

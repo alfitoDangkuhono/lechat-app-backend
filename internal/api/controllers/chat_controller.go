@@ -226,6 +226,30 @@ func (c *ChatController) MarkDelivered(ctx *gin.Context) {
 	utils.SuccessResponse(ctx, http.StatusOK, result)
 }
 
+func (c *ChatController) AckMessages(ctx *gin.Context) {
+	claims, ok := authenticatedClaims(ctx)
+	if !ok {
+		writeChatError(ctx, http.StatusUnauthorized, constant.ErrInvalidToken)
+		return
+	}
+	conversationID := ctx.Param("conversation_id")
+	if !uuidPattern.MatchString(conversationID) {
+		writeChatError(ctx, http.StatusBadRequest, constant.ErrChatInvalidRequest)
+		return
+	}
+
+	var req request.AckMessagesRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		writeChatError(ctx, http.StatusBadRequest, constant.ErrChatInvalidRequest)
+		return
+	}
+	if err := c.chat.AckMessages(claims.UserId, conversationID, req); err != nil {
+		writeChatServiceError(ctx, err)
+		return
+	}
+	ctx.Status(http.StatusNoContent)
+}
+
 func (c *ChatController) EditMessage(ctx *gin.Context) {
 	claims, ok := authenticatedClaims(ctx)
 	if !ok {
@@ -369,6 +393,14 @@ func writeChatServiceError(ctx *gin.Context, err error) {
 		writeChatError(ctx, http.StatusForbidden, err)
 	case errors.Is(err, constant.ErrChatNotContact):
 		writeChatError(ctx, http.StatusForbidden, err)
+	case errors.Is(err, constant.ErrChatEncryptionRequired), errors.Is(err, constant.ErrChatGroupEncrypted):
+		writeChatError(ctx, http.StatusBadRequest, err)
+	case errors.Is(err, constant.ErrPayloadTooLarge):
+		writeChatError(ctx, http.StatusRequestEntityTooLarge, err)
+	case errors.Is(err, constant.ErrRateLimited):
+		writeChatError(ctx, http.StatusTooManyRequests, err)
+	case errors.Is(err, constant.ErrInvalidPublicKey):
+		writeChatError(ctx, http.StatusBadRequest, err)
 	case errors.Is(err, constant.ErrGroupInvitationInvalid):
 		writeChatError(ctx, http.StatusConflict, err)
 	case errors.Is(err, constant.ErrGroupInvitationPending):

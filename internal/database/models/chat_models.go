@@ -28,8 +28,9 @@ type ConversationRole struct {
 }
 
 type MessageMutationState struct {
-	SenderID  int64      `gorm:"column:sender_id"`
-	DeletedAt *time.Time `gorm:"column:deleted_at"`
+	SenderID          int64      `gorm:"column:sender_id"`
+	EncryptionVersion *int       `gorm:"column:encryption_version"`
+	DeletedAt         *time.Time `gorm:"column:deleted_at"`
 }
 
 type MessageConversationReference struct {

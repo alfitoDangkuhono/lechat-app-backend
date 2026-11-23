@@ -1,4 +1,4 @@
-CREATE TABLE group_invitations (
+CREATE TABLE IF NOT EXISTS group_invitations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     inviter_id BIGINT NOT NULL REFERENCES users(id),
@@ -15,14 +15,15 @@ CREATE TABLE group_invitations (
     )
 );
 
-CREATE UNIQUE INDEX idx_group_invitations_one_pending
+CREATE UNIQUE INDEX IF NOT EXISTS idx_group_invitations_one_pending
     ON group_invitations (conversation_id, invitee_id)
     WHERE status = 'pending';
 
-CREATE INDEX idx_group_invitations_incoming
+CREATE INDEX IF NOT EXISTS idx_group_invitations_incoming
     ON group_invitations (invitee_id, created_at DESC)
     WHERE status = 'pending';
 
+DROP TRIGGER IF EXISTS trg_group_invitations_updated_at ON group_invitations;
 CREATE TRIGGER trg_group_invitations_updated_at
 BEFORE UPDATE ON group_invitations
 FOR EACH ROW

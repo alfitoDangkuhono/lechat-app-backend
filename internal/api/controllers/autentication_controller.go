@@ -3,6 +3,7 @@ package controllers
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"lechat-backend/internal/api/middleware"
 	"lechat-backend/internal/constant"
@@ -230,4 +231,58 @@ func (c *AuthenticationController) UpdateProfile(ctx *gin.Context) {
 	}
 
 	utils.SuccessResponse(ctx, http.StatusOK, profile)
+}
+
+func (c *AuthenticationController) UpdatePublicKeys(ctx *gin.Context) {
+	claimsValue, exists := ctx.Get(middleware.AuthenticatedClaimsKey)
+
+	claims, ok := claimsValue.(*models.JwtClaims)
+
+	if !exists || !ok || claims == nil {
+		utils.ErrorResponse(ctx, http.StatusUnauthorized, constant.ErrInvalidToken, nil)
+		return
+	}
+
+	var req request.UpdatePublicKeysRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		helpers.CustomValidationInput(ctx, err)
+		return
+	}
+
+	publicKeys, err := c.iauthentication.UpdatePublicKeys(claims.UserId, req)
+	if err != nil {
+		if errors.Is(err, constant.ErrInvalidPublicKey) {
+			utils.ErrorResponse(ctx, http.StatusBadRequest, constant.ErrInvalidPublicKey, nil)
+			return
+		}
+		if errors.Is(err, constant.ErrNotRecordUpdate) {
+			utils.ErrorResponse(ctx, http.StatusNotFound, errors.New("data not update because not found data"), nil)
+			return
+		}
+		utils.ErrorResponse(ctx, http.StatusInternalServerError, constant.ErrInternalServer, nil)
+		return
+	}
+
+	_ = publicKeys
+	ctx.Status(http.StatusNoContent)
+}
+
+func (c *AuthenticationController) GetUserPublicKey(ctx *gin.Context) {
+	targetID, err := strconv.ParseUint(ctx.Param("user_id"), 10, 64)
+	if err != nil || targetID == 0 || uint64(uint(targetID)) != targetID {
+		utils.ErrorResponse(ctx, http.StatusBadRequest, errors.New("invalid user id"), nil)
+		return
+	}
+
+	publicKey, err := c.iauthentication.GetUserPublicKey(uint(targetID))
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			utils.ErrorResponse(ctx, http.StatusNotFound, constant.ErrNotFoundData, nil)
+			return
+		}
+		utils.ErrorResponse(ctx, http.StatusInternalServerError, constant.ErrInternalServer, nil)
+		return
+	}
+
+	utils.SuccessResponse(ctx, http.StatusOK, publicKey)
 }

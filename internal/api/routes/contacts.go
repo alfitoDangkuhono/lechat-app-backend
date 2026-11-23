@@ -18,4 +18,5 @@ func ContactRoutes(router *gin.Engine, jwt interfaces.IJwtInterface, contactCont
 	authenticated.POST("/contacts/:user_id/accept", contactController.AcceptContact)
 	authenticated.DELETE("/contacts/:user_id/requests", contactController.RejectContact)
 	authenticated.DELETE("/contacts/:user_id", contactController.RemoveContact)
+	authenticated.GET("/contacts/:user_id/keys", contactController.FindContactPublicKeys)
 }

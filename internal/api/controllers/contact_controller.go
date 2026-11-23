@@ -117,3 +117,22 @@ func contactTarget(ctx *gin.Context) (*models.JwtClaims, uint, bool) {
 	}
 	return claims, uint(targetID), true
 }
+
+func (c *ContactController) FindContactPublicKeys(ctx *gin.Context) {
+
+	contactId, err := strconv.ParseUint(ctx.Param("user_id"), 10, 64)
+
+	if err != nil || contactId == 0 || uint64(uint(contactId)) != contactId {
+		writeChatError(ctx, http.StatusBadRequest, constant.ErrChatInvalidRequest)
+		return
+	}
+
+	publicKeys, err := c.contacts.FindContactPublicKeys(uint(contactId))
+
+	if err != nil {
+		utils.ErrorResponse(ctx, http.StatusNotFound, constant.ErrNotFoundData, nil)
+		return
+	}
+
+	utils.SuccessResponse(ctx, http.StatusOK, publicKeys)
+}

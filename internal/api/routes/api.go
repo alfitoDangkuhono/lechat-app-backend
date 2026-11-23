@@ -21,6 +21,8 @@ func Routes(router *gin.Engine, authenticationController *controllers.Authentica
 	authenticated.GET("/sessions/check-session", authenticationController.CheckSession)
 	authenticated.GET("/profile", authenticationController.Profile)
 	authenticated.POST("/profile", authenticationController.UpdateProfile)
+	authenticated.PUT("/keys/me", authenticationController.UpdatePublicKeys)
+	authenticated.GET("/users/:user_id/key", authenticationController.GetUserPublicKey)
 	if len(chatControllers) > 0 && chatControllers[0] != nil {
 		chatController := chatControllers[0]
 		authenticated.POST("/conversations", chatController.CreateConversation)
@@ -28,6 +30,7 @@ func Routes(router *gin.Engine, authenticationController *controllers.Authentica
 		authenticated.GET("/conversations/:conversation_id/members", chatController.ListGroupMembers)
 		authenticated.GET("/conversations/:conversation_id/messages", chatController.ListMessages)
 		authenticated.POST("/conversations/:conversation_id/messages", chatController.SendMessage)
+		authenticated.POST("/conversations/:conversation_id/messages/ack", chatController.AckMessages)
 		authenticated.POST("/conversations/:conversation_id/delivered", chatController.MarkDelivered)
 		authenticated.POST("/conversations/:conversation_id/read", chatController.MarkRead)
 		authenticated.PATCH("/messages/:message_id", chatController.EditMessage)

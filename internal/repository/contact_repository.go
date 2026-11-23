@@ -194,3 +194,20 @@ func orderedUsers(first, second uint) (uint, uint) {
 	}
 	return second, first
 }
+
+func (r *ContactRepository) FindContactPublicKeys(targetId uint) (*dto.PublicKeyDto, error) {
+	var publicKeyDto dto.PublicKeyDto
+
+	err := r.db.Raw(`
+		SELECT users.public_key,
+		       COALESCE(users.public_key_updated_at, users.updated_at) AS updated_at
+		FROM contacts
+		INNER JOIN users ON users.id = contacts.user_high
+		WHERE users.id = ?
+	`, targetId).Scan(&publicKeyDto).Error
+
+	if err != nil {
+		return nil, err
+	}
+	return &publicKeyDto, nil
+}

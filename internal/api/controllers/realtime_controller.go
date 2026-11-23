@@ -35,17 +35,20 @@ type RealtimeController struct {
 }
 
 type realtimeFrame struct {
-	Type             string  `json:"type"`
-	Token            string  `json:"token,omitempty"`
-	ConversationID   string  `json:"conversation_id,omitempty"`
-	BeforeID         string  `json:"before_id,omitempty"`
-	Limit            int     `json:"limit,omitempty"`
-	ClientMessageID  string  `json:"client_message_id,omitempty"`
-	MessageType      string  `json:"message_type,omitempty"`
-	Body             string  `json:"body,omitempty"`
-	ReplyToMessageID *string `json:"reply_to_message_id,omitempty"`
-	MessageID        string  `json:"message_id,omitempty"`
-	ThroughMessageID string  `json:"through_message_id,omitempty"`
+	Type              string     `json:"type,omitempty"`
+	Token             string     `json:"token,omitempty"`
+	ConversationID    string     `json:"conversation_id,omitempty"`
+	BeforeID          string     `json:"before_id,omitempty"`
+	Limit             int        `json:"limit,omitempty"`
+	ClientMessageID   string     `json:"client_message_id,omitempty"`
+	MessageType       string     `json:"message_type,omitempty"`
+	Body              string     `json:"body,omitempty"`
+	EncryptionVersion *int       `json:"encryption_version,omitempty"`
+	Ciphertext        *string    `json:"ciphertext,omitempty"`
+	IV                *string    `json:"iv,omitempty"`
+	ReplyToMessageID  *string    `json:"reply_to_message_id,omitempty"`
+	MessageID         string     `json:"message_id,omitempty"`
+	ThroughMessageID  string     `json:"through_message_id,omitempty"`
 }
 
 type realtimeEvent struct {
@@ -222,10 +225,13 @@ func (c *RealtimeController) handleFrame(client *services.RealtimeClient, userID
 			return constant.ErrChatForbidden
 		}
 		message, err := c.chat.SendMessage(userID, frame.ConversationID, request.SendMessageRequest{
-			ClientMessageID:  frame.ClientMessageID,
-			Type:             frame.MessageType,
-			Body:             frame.Body,
-			ReplyToMessageID: frame.ReplyToMessageID,
+			ClientMessageID:   frame.ClientMessageID,
+			Type:              frame.MessageType,
+			Body:              frame.Body,
+			EncryptionVersion: frame.EncryptionVersion,
+			Ciphertext:        frame.Ciphertext,
+			IV:                frame.IV,
+			ReplyToMessageID:  frame.ReplyToMessageID,
 		})
 		if err != nil {
 			return err
@@ -348,15 +354,25 @@ func (c *RealtimeController) writePump(conn *websocket.Conn, client *services.Re
 func realtimeErrorMessage(err error) string {
 	switch {
 	case errors.Is(err, constant.ErrChatInvalidRequest):
-		return constant.ErrChatInvalidRequest.Error()
+		return "bad_request"
 	case errors.Is(err, constant.ErrChatInvalidReply):
-		return constant.ErrChatInvalidReply.Error()
+		return "invalid_reply"
 	case errors.Is(err, constant.ErrChatForbidden), errors.Is(err, constant.ErrChatNotContact):
-		return constant.ErrChatForbidden.Error()
+		return "forbidden"
 	case errors.Is(err, gorm.ErrRecordNotFound):
-		return constant.ErrNotFoundData.Error()
+		return "not_found"
 	case errors.Is(err, constant.ErrChatConflict):
-		return constant.ErrChatConflict.Error()
+		return "conflict"
+	case errors.Is(err, constant.ErrChatEncryptionRequired):
+		return "encryption_required"
+	case errors.Is(err, constant.ErrChatGroupEncrypted):
+		return "group_encryption_unsupported"
+	case errors.Is(err, constant.ErrInvalidPublicKey):
+		return "invalid_public_key"
+	case errors.Is(err, constant.ErrPayloadTooLarge):
+		return "payload_too_large"
+	case errors.Is(err, constant.ErrRateLimited):
+		return "rate_limited"
 	default:
 		return constant.ErrInternalServer.Error()
 	}

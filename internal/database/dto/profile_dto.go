@@ -14,4 +14,5 @@ type ProfileDto struct {
 	About              string    `json:"about"`
 	AvatarURL          *string   `json:"avatar_url"`
 	AvatarURLExpiresIn int       `json:"avatar_url_expires_in,omitempty"`
+	PublicKey          *string   `json:"public_key"`
 }

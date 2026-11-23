@@ -77,7 +77,7 @@ Migrasi `20261103070000_chat_hardening` menambah constraint pasangan pengguna di
 Migrasi `20261104130000_message_replies` menambahkan kolom nullable `messages.reply_to_message_id`. Untuk pesan balasan, nilai tersebut disimpan pada **baris pesan balasan** dan menunjuk ke ID pesan asal; baris pesan asal tidak diubah. Jalankan migrasi setelah deploy kode backend:
 
 ```powershell
-migrate -path internal/database/migrations -database "postgres://<user>:<password>@<host>:<port>/<database>?sslmode=disable" up
+migrate -path internal/database/migrations -database "postgres://<user>:<password>@<host>:<port>/<database>/<nama database>?sslmode=disable" up
 ```
 
 Pastikan versi migrasi database sudah mencakup `20261104130000` dan kolom tersedia:
