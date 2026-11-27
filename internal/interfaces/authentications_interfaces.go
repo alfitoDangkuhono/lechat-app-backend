@@ -11,4 +11,6 @@ type IAuthentications interface {
 	CredentialLogin(email string, password string) (dto.LoginDto, error)
 	GetProfile(userID uint) (dto.ProfileDto, error)
 	UpdateProfile(UserId uint, req request.ProfileRequest) (dto.ProfileDto, error)
+	UpdatePublicKeys(userId uint, req request.UpdatePublicKeysRequest) (dto.PublicKeyDto, error)
+	GetUserPublicKey(userID uint) (dto.PublicKeyDto, error)
 }

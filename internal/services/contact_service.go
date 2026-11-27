@@ -59,3 +59,10 @@ func validContactPair(userID, targetID uint) bool {
 	return userID > 0 && targetID > 0 && userID != targetID &&
 		uint64(userID) <= math.MaxInt64 && uint64(targetID) <= math.MaxInt64
 }
+
+func (s *ContactService) FindContactPublicKeys(targetId uint) (*dto.PublicKeyDto, error) {
+	if targetId == 0 {
+		return nil, constant.ErrChatInvalidRequest
+	}
+	return s.contactRepository.FindContactPublicKeys(targetId)
+}

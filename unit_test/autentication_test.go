@@ -27,24 +27,30 @@ import (
 )
 
 type authenticationStub struct {
-	user                 models.Users
-	err                  error
-	calls                int
-	req                  request.AddUserRequest
-	login                dto.LoginDto
-	loginErr             error
-	loginCalls           int
-	loginEmail           string
-	loginPassword        string
-	profile              dto.ProfileDto
-	profileErr           error
-	profileCalls         int
-	profileUserID        uint
-	updatedProfile       dto.ProfileDto
-	updateProfileErr     error
-	updateProfileCalls   int
-	updateProfileUserID  uint
-	updateProfileRequest request.ProfileRequest
+	user                   models.Users
+	err                    error
+	calls                  int
+	req                    request.AddUserRequest
+	login                  dto.LoginDto
+	loginErr               error
+	loginCalls             int
+	loginEmail             string
+	loginPassword          string
+	profile                dto.ProfileDto
+	profileErr             error
+	profileCalls           int
+	profileUserID          uint
+	updatedProfile         dto.ProfileDto
+	updateProfileErr       error
+	updateProfileCalls     int
+	updateProfileUserID    uint
+	updateProfileRequest   request.ProfileRequest
+	updatePublicKey        request.UpdatePublicKeysRequest
+	updatePublicKeyCalls   int
+	updatedPublicKey       dto.PublicKeyDto
+	updatePublicKeyError   error
+	updatePublicKeyId      uint
+	updatePublicKeysResult dto.PublicKeyDto
 }
 
 func (s *authenticationStub) Registration(req request.AddUserRequest) (models.Users, error) {
@@ -71,6 +77,17 @@ func (s *authenticationStub) UpdateProfile(userID uint, req request.ProfileReque
 	s.updateProfileUserID = userID
 	s.updateProfileRequest = req
 	return s.updatedProfile, s.updateProfileErr
+}
+
+func (s *authenticationStub) UpdatePublicKeys(userId uint, req request.UpdatePublicKeysRequest) (dto.PublicKeyDto, error) {
+	s.updatePublicKeyCalls++
+	s.updatePublicKeyId = userId
+	s.updatePublicKey = req
+	return s.updatedPublicKey, s.updatePublicKeyError
+}
+
+func (s *authenticationStub) GetUserPublicKey(userID uint) (dto.PublicKeyDto, error) {
+	return dto.PublicKeyDto{}, nil
 }
 
 type jwtStub struct {
@@ -208,6 +225,20 @@ func profileRequest(auth *authenticationStub, jwt *jwtStub, authorization string
 
 	recorder := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/profile", nil)
+	if authorization != "" {
+		req.Header.Set("Authorization", authorization)
+	}
+	router.ServeHTTP(recorder, req)
+	return recorder
+}
+
+func updatePublicKeyRequest(body string, auth *authenticationStub, jwt *jwtStub, authorization string) *httptest.ResponseRecorder {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	routes.Routes(router, controllers.NewAuthenticationController(auth, jwt), jwt)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/keys/me", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application.json")
 	if authorization != "" {
 		req.Header.Set("Authorization", authorization)
 	}
@@ -1084,5 +1115,42 @@ func TestJWTServiceCanRevokeLegacyTokenWithoutID(t *testing.T) {
 	}
 	if _, err := jwtService.ValidateToken(legacyToken); !errors.Is(err, constant.ErrTokenRevoked) {
 		t.Errorf("expected revoked-token error, got %v", err)
+	}
+}
+
+func TestUpdatePublicKeys(t *testing.T) {
+	auth := &authenticationStub{}
+	jwtService := &jwtStub{claims: &models.JwtClaims{UserId: 42}}
+	body := `{"public_key":"xxsfnaondndongsndgdkgndkndknkd"}`
+	recorder := updatePublicKeyRequest(body, auth, jwtService, "Bearer valid-token")
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusNoContent, recorder.Code, recorder.Body.String())
+	}
+	if auth.updatePublicKeyCalls != 1 || auth.updatePublicKeyId != 42 {
+		t.Errorf("expected id user 42, got calls=%d userId=%d", auth.updatePublicKeyCalls, auth.updatePublicKeyId)
+	}
+}
+
+func TestUpdatePublicKeyRequiredValidBearerToken(t *testing.T) {
+	auth := &authenticationStub{}
+	jwtService := &jwtStub{claims: &models.JwtClaims{UserId: 42}}
+	recorder := updatePublicKeyRequest(`{"public_key":"snfsnfkfndfkdfndnfd"}`, auth, jwtService, "")
+
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status:%d, got %d:%s", http.StatusUnauthorized, recorder.Code, recorder.Body.String())
+	}
+	if auth.updatePublicKeyCalls != 0 {
+		t.Errorf("update must not run without authorization, got %d calls", auth.updatePublicKeyCalls)
+	}
+}
+
+func TestUpdatePublicKeysReturnNotFoundData(t *testing.T) {
+	auth := &authenticationStub{
+		updatePublicKeyError: constant.ErrNotRecordUpdate,
+	}
+	jwtService := &jwtStub{claims: &models.JwtClaims{UserId: 42}}
+	recorder := updatePublicKeyRequest(`{"public_key":"snfknfkdnfkdfdkfndfkd"}`, auth, jwtService, "Bearer token-valid")
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusNotFound, recorder.Code, recorder.Body.String())
 	}
 }

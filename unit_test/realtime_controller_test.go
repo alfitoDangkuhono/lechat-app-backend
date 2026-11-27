@@ -27,13 +27,14 @@ func (realtimeChatStub) ListMessages(uint, string, string, int) ([]dto.MessageDt
 }
 
 func (realtimeChatStub) SendMessage(userID uint, conversationID string, req request.SendMessageRequest) (dto.MessageDto, error) {
+	body := req.Body
 	return dto.MessageDto{
 		ID:              "message-id",
 		ConversationID:  conversationID,
 		SenderID:        int64(userID),
 		ClientMessageID: req.ClientMessageID,
 		Type:            req.Type,
-		Body:            req.Body,
+		Body:            &body,
 		CreatedAt:       time.Now(),
 	}, nil
 }

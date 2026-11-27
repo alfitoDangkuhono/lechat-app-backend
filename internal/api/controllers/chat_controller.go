@@ -226,6 +226,30 @@ func (c *ChatController) MarkDelivered(ctx *gin.Context) {
 	utils.SuccessResponse(ctx, http.StatusOK, result)
 }
 
+func (c *ChatController) AckMessages(ctx *gin.Context) {
+	claims, ok := authenticatedClaims(ctx)
+	if !ok {
+		writeChatError(ctx, http.StatusUnauthorized, constant.ErrInvalidToken)
+		return
+	}
+	conversationID := ctx.Param("conversation_id")
+	if !uuidPattern.MatchString(conversationID) {
+		writeChatError(ctx, http.StatusBadRequest, constant.ErrChatInvalidRequest)
+		return
+	}
+
+	var req request.AckMessagesRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		writeChatError(ctx, http.StatusBadRequest, constant.ErrChatInvalidRequest)
+		return
+	}
+	if err := c.chat.AckMessages(claims.UserId, conversationID, req); err != nil {
+		writeChatServiceError(ctx, err)
+		return
+	}
+	ctx.Status(http.StatusNoContent)
+}
+
 func (c *ChatController) EditMessage(ctx *gin.Context) {
 	claims, ok := authenticatedClaims(ctx)
 	if !ok {
@@ -350,6 +374,76 @@ func (c *ChatController) RemoveMember(ctx *gin.Context) {
 	utils.SuccessResponse(ctx, http.StatusOK, result)
 }
 
+func (c *ChatController) UploadGroupKeys(ctx *gin.Context) {
+	claims, ok := authenticatedClaims(ctx)
+	if !ok {
+		writeChatError(ctx, http.StatusUnauthorized, constant.ErrInvalidToken)
+		return
+	}
+	conversationID := ctx.Param("conversation_id")
+	if !uuidPattern.MatchString(conversationID) {
+		writeChatError(ctx, http.StatusBadRequest, constant.ErrChatInvalidRequest)
+		return
+	}
+
+	var req request.UploadGroupKeysRequest
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		writeChatError(ctx, http.StatusBadRequest, constant.ErrChatInvalidRequest)
+		return
+	}
+
+	if err := c.chat.UploadGroupKeys(claims.UserId, conversationID, req); err != nil {
+		writeChatServiceError(ctx, err)
+		return
+	}
+
+	// Best-effort realtime notification so members fetch the new wrapped key
+	// via GET /keys/me. Payload carries only metadata (key_version, sender) —
+	// never key material (zero-knowledge).
+	if memberIDs, err := c.chat.ActiveMemberIDs(conversationID); err == nil {
+		_ = c.hub.BroadcastUsers(memberIDs, realtimeEvent{
+			Type:           "group_key.created",
+			ConversationID: conversationID,
+			Data: gin.H{
+				"key_version": req.KeyVersion,
+				"sender_id":   claims.UserId,
+			},
+		})
+	}
+
+	utils.SuccessResponse(ctx, http.StatusOK, nil)
+}
+
+func (c *ChatController) GetMyGroupKey(ctx *gin.Context) {
+	claims, ok := authenticatedClaims(ctx)
+	if !ok {
+		writeChatError(ctx, http.StatusUnauthorized, constant.ErrInvalidToken)
+		return
+	}
+	conversationID := ctx.Param("conversation_id")
+	if !uuidPattern.MatchString(conversationID) {
+		writeChatError(ctx, http.StatusBadRequest, constant.ErrChatInvalidRequest)
+		return
+	}
+
+	var keyVersion *int
+	if versionStr := ctx.Query("key_version"); versionStr != "" {
+		v, err := strconv.Atoi(versionStr)
+		if err != nil || v < 1 {
+			writeChatError(ctx, http.StatusBadRequest, constant.ErrChatInvalidRequest)
+			return
+		}
+		keyVersion = &v
+	}
+
+	result, err := c.chat.GetMyGroupKey(claims.UserId, conversationID, keyVersion)
+	if err != nil {
+		writeChatServiceError(ctx, err)
+		return
+	}
+	utils.SuccessResponse(ctx, http.StatusOK, result)
+}
+
 func authenticatedClaims(ctx *gin.Context) (*models.JwtClaims, bool) {
 	value, exists := ctx.Get(middleware.AuthenticatedClaimsKey)
 	if !exists {
@@ -369,11 +463,21 @@ func writeChatServiceError(ctx *gin.Context, err error) {
 		writeChatError(ctx, http.StatusForbidden, err)
 	case errors.Is(err, constant.ErrChatNotContact):
 		writeChatError(ctx, http.StatusForbidden, err)
+	case errors.Is(err, constant.ErrChatEncryptionRequired), errors.Is(err, constant.ErrChatGroupEncrypted):
+		writeChatError(ctx, http.StatusBadRequest, err)
+	case errors.Is(err, constant.ErrPayloadTooLarge):
+		writeChatError(ctx, http.StatusRequestEntityTooLarge, err)
+	case errors.Is(err, constant.ErrRateLimited):
+		writeChatError(ctx, http.StatusTooManyRequests, err)
+	case errors.Is(err, constant.ErrInvalidPublicKey):
+		writeChatError(ctx, http.StatusBadRequest, err)
 	case errors.Is(err, constant.ErrGroupInvitationInvalid):
 		writeChatError(ctx, http.StatusConflict, err)
 	case errors.Is(err, constant.ErrGroupInvitationPending):
 		writeChatError(ctx, http.StatusConflict, err)
 	case errors.Is(err, constant.ErrChatConflict):
+		writeChatError(ctx, http.StatusConflict, err)
+	case errors.Is(err, constant.ErrChatKeyVersionConflict):
 		writeChatError(ctx, http.StatusConflict, err)
 	case errors.Is(err, constant.ErrContactRequestPending):
 		writeChatError(ctx, http.StatusConflict, err)

@@ -1,6 +1,6 @@
 ALTER TABLE conversations
-    ADD COLUMN direct_user_low BIGINT REFERENCES users(id),
-    ADD COLUMN direct_user_high BIGINT REFERENCES users(id);
+    ADD COLUMN IF NOT EXISTS direct_user_low BIGINT REFERENCES users(id),
+    ADD COLUMN IF NOT EXISTS direct_user_high BIGINT REFERENCES users(id);
 
 UPDATE conversations AS c
 SET direct_user_low = participants.user_low,
@@ -15,6 +15,9 @@ WHERE c.id = participants.conversation_id
   AND c.type = 'direct';
 
 ALTER TABLE conversations
+    DROP CONSTRAINT IF EXISTS chk_conversations_direct_pair;
+
+ALTER TABLE conversations
     ADD CONSTRAINT chk_conversations_direct_pair
     CHECK (
         (type = 'direct'
@@ -27,11 +30,11 @@ ALTER TABLE conversations
             AND direct_user_high IS NULL)
     );
 
-CREATE UNIQUE INDEX idx_conversations_direct_pair
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_direct_pair
     ON conversations (direct_user_low, direct_user_high)
     WHERE type = 'direct';
 
-CREATE FUNCTION enforce_direct_conversation_member_pair()
+CREATE OR REPLACE FUNCTION enforce_direct_conversation_member_pair()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
@@ -54,10 +57,15 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS trg_conversations_members_direct_pair ON conversations_members;
 CREATE TRIGGER trg_conversations_members_direct_pair
 BEFORE INSERT OR UPDATE OF conversation_id, user_id ON conversations_members
 FOR EACH ROW
 EXECUTE FUNCTION enforce_direct_conversation_member_pair();
+
+ALTER TABLE messages
+    DROP CONSTRAINT IF EXISTS uq_messages_sender_client_id,
+    DROP CONSTRAINT IF EXISTS fk_messages_conversation_sender;
 
 ALTER TABLE messages
     ADD CONSTRAINT uq_messages_sender_client_id
@@ -66,13 +74,13 @@ ALTER TABLE messages
     FOREIGN KEY (conversation_id, sender_id)
     REFERENCES conversations_members (conversation_id, user_id);
 
-CREATE INDEX idx_messages_conversation_timeline
+CREATE INDEX IF NOT EXISTS idx_messages_conversation_timeline
     ON messages (conversation_id, created_at DESC, id DESC);
 
-CREATE INDEX idx_messages_receipts_user_unread
+CREATE INDEX IF NOT EXISTS idx_messages_receipts_user_unread
     ON messages_receipts (user_id, read_at);
 
-CREATE TABLE message_attachments (
+CREATE TABLE IF NOT EXISTS message_attachments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     message_id UUID NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
     storage_key VARCHAR NOT NULL UNIQUE,
@@ -84,7 +92,7 @@ CREATE TABLE message_attachments (
     UNIQUE (message_id, sort_order)
 );
 
-CREATE FUNCTION set_updated_at()
+CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
@@ -94,17 +102,19 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS trg_conversations_updated_at ON conversations;
 CREATE TRIGGER trg_conversations_updated_at
 BEFORE UPDATE ON conversations
 FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
 
+DROP TRIGGER IF EXISTS trg_messages_updated_at ON messages;
 CREATE TRIGGER trg_messages_updated_at
 BEFORE UPDATE ON messages
 FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
 
-CREATE FUNCTION enforce_active_message_sender()
+CREATE OR REPLACE FUNCTION enforce_active_message_sender()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
@@ -124,12 +134,13 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS trg_messages_active_sender ON messages;
 CREATE TRIGGER trg_messages_active_sender
 BEFORE INSERT OR UPDATE OF conversation_id, sender_id ON messages
 FOR EACH ROW
 EXECUTE FUNCTION enforce_active_message_sender();
 
-CREATE FUNCTION enforce_message_attachment_type()
+CREATE OR REPLACE FUNCTION enforce_message_attachment_type()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
@@ -147,12 +158,13 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS trg_message_attachments_type ON message_attachments;
 CREATE TRIGGER trg_message_attachments_type
 BEFORE INSERT OR UPDATE OF message_id ON message_attachments
 FOR EACH ROW
 EXECUTE FUNCTION enforce_message_attachment_type();
 
-CREATE FUNCTION prevent_text_message_with_attachments()
+CREATE OR REPLACE FUNCTION prevent_text_message_with_attachments()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
@@ -170,6 +182,7 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS trg_messages_attachment_type ON messages;
 CREATE TRIGGER trg_messages_attachment_type
 BEFORE UPDATE OF type ON messages
 FOR EACH ROW

@@ -1,4 +1,4 @@
-CREATE TABLE contacts (
+CREATE TABLE IF NOT EXISTS contacts (
     user_low BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     user_high BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     requested_by BIGINT NOT NULL REFERENCES users(id),
@@ -15,10 +15,10 @@ CREATE TABLE contacts (
     )
 );
 
-CREATE INDEX idx_contacts_user_low_status ON contacts (user_low, status);
-CREATE INDEX idx_contacts_user_high_status ON contacts (user_high, status);
+CREATE INDEX IF NOT EXISTS idx_contacts_user_low_status ON contacts (user_low, status);
+CREATE INDEX IF NOT EXISTS idx_contacts_user_high_status ON contacts (user_high, status);
 
-CREATE FUNCTION enforce_direct_contact_membership()
+CREATE OR REPLACE FUNCTION enforce_direct_contact_membership()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
@@ -52,12 +52,13 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS trg_contacts_direct_membership ON conversations_members;
 CREATE TRIGGER trg_contacts_direct_membership
 BEFORE INSERT OR UPDATE OF conversation_id, user_id ON conversations_members
 FOR EACH ROW
 EXECUTE FUNCTION enforce_direct_contact_membership();
 
-CREATE FUNCTION enforce_direct_message_contact()
+CREATE OR REPLACE FUNCTION enforce_direct_message_contact()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
@@ -86,6 +87,7 @@ BEGIN
 END;
 $$;
 
+DROP TRIGGER IF EXISTS trg_messages_direct_contact ON messages;
 CREATE TRIGGER trg_messages_direct_contact
 BEFORE INSERT OR UPDATE OF conversation_id ON messages
 FOR EACH ROW

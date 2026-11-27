@@ -9,4 +9,5 @@ type IContacts interface {
 	RemoveContact(userID, targetID uint) error
 	ListContacts(userID uint) ([]dto.ContactDto, error)
 	ListContactRequests(userID uint) ([]dto.ContactDto, error)
+	FindContactPublicKeys(targetId uint) (*dto.PublicKeyDto, error)
 }

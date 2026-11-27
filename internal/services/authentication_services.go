@@ -2,8 +2,10 @@ package services
 
 import (
 	"errors"
+	"lechat-backend/internal/constant"
 	"lechat-backend/internal/database/dto"
 	"lechat-backend/internal/database/models"
+	"lechat-backend/internal/helpers"
 	"lechat-backend/internal/interfaces"
 	"lechat-backend/internal/repository"
 	"lechat-backend/internal/request"
@@ -60,4 +62,19 @@ func (s *AuthenticationService) UpdateProfile(UserId uint, req request.ProfileRe
 		return dto.ProfileDto{}, errors.New("no_changes_detected")
 	}
 	return s.authenticationRepository.UpdateProfile(UserId, req)
+}
+
+func (s *AuthenticationService) UpdatePublicKeys(userId uint, req request.UpdatePublicKeysRequest) (dto.PublicKeyDto, error) {
+	if !helpers.IsValidPublicKeyP256(req.PublicKey) {
+		return dto.PublicKeyDto{}, constant.ErrInvalidPublicKey
+	}
+	publicKeyDto, err := s.authenticationRepository.UpdatePublicKeys(userId, req)
+	if err != nil {
+		return dto.PublicKeyDto{}, err
+	}
+	return publicKeyDto, nil
+}
+
+func (s *AuthenticationService) GetUserPublicKey(userID uint) (dto.PublicKeyDto, error) {
+	return s.authenticationRepository.FindPublicKeyByUserID(userID)
 }

@@ -3,17 +3,19 @@ package models
 import "time"
 
 type Users struct {
-	Id        int       `json:"id"`
-	Username  string    `json:"username"`
-	Email     string    `json:"email"`
-	Password  string    `json:"password"`
-	FirstName string    `json:"first_name"`
-	LastName  string    `json:"last_name"`
-	Phone     string    `json:"phone"`
-	About     string    `json:"about"`
-	AvatarURL *string   `json:"avatar_url"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Id                 int        `json:"id"`
+	Username           string     `json:"username"`
+	Email              string     `json:"email"`
+	Password           string     `json:"password"`
+	FirstName          string     `json:"first_name"`
+	LastName           string     `json:"last_name"`
+	Phone              string     `json:"phone"`
+	About              string     `json:"about"`
+	AvatarURL          *string    `json:"avatar_url"`
+	PublicKey          *string    `gorm:"column:public_key"`
+	PublicKeyUpdatedAt *time.Time `gorm:"column:public_key_updated_at"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
 type ConversationMember struct {
@@ -25,15 +27,19 @@ type ConversationMember struct {
 }
 
 type Message struct {
-	ID               string     `gorm:"column:id;primaryKey;default:gen_random_uuid()"`
-	ConversationID   string     `gorm:"column:conversation_id"`
-	SenderID         int64      `gorm:"column:sender_id"`
-	ClientMessageID  string     `gorm:"column:client_message_id"`
-	ReplyToMessageID *string    `gorm:"column:reply_to_message_id"`
-	Type             string     `gorm:"column:type"`
-	Body             string     `gorm:"column:body"`
-	EditedAt         *time.Time `gorm:"column:edited_at"`
-	DeletedAt        *time.Time `gorm:"column:deleted_at"`
-	CreatedAt        time.Time  `gorm:"column:created_at;autoCreateTime"`
-	UpdatedAt        time.Time  `gorm:"column:updated_at;autoCreateTime;autoUpdateTime"`
+	ID                string     `gorm:"column:id;primaryKey;default:gen_random_uuid()"`
+	ConversationID    string     `gorm:"column:conversation_id"`
+	SenderID          int64      `gorm:"column:sender_id"`
+	ClientMessageID   string     `gorm:"column:client_message_id"`
+	ReplyToMessageID  *string    `gorm:"column:reply_to_message_id"`
+	Type              string     `gorm:"column:type"`
+	Body              *string    `gorm:"column:body"`
+	Ciphertext        *string    `gorm:"column:ciphertext"`
+	IV                *[]byte    `gorm:"column:iv"`
+	EncryptionVersion *int       `gorm:"column:encryption_version"`
+	KeyVersion        *int       `gorm:"column:key_version"`
+	EditedAt          *time.Time `gorm:"column:edited_at"`
+	DeletedAt         *time.Time `gorm:"column:deleted_at"`
+	CreatedAt         time.Time  `gorm:"column:created_at;autoCreateTime"`
+	UpdatedAt         time.Time  `gorm:"column:updated_at;autoCreateTime;autoUpdateTime"`
 }

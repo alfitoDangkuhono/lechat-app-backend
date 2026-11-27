@@ -3,18 +3,19 @@ package dto
 import "time"
 
 type ConversationDto struct {
-	ID                 string                  `json:"id"`
-	Type               string                  `json:"type"`
-	Title              *string                 `json:"title"`
-	MemberCount        int64                   `json:"member_count,omitempty"`
-	Members            []ConversationMemberDto `json:"members" gorm:"-"`
-	CreatedAt          time.Time               `json:"created_at"`
-	UpdatedAt          time.Time               `json:"updated_at"`
-	LastMessageID      *string                 `json:"last_message_id"`
-	LastMessageBody    *string                 `json:"last_message_body"`
-	LastMessageType    *string                 `json:"last_message_type"`
-	LastMessageAt      *time.Time              `json:"last_message_at"`
-	UnreadMessageCount int64                   `json:"unread_message_count"`
+	ID                    string                  `json:"id"`
+	Type                  string                  `json:"type"`
+	Title                 *string                 `json:"title"`
+	MemberCount           int64                   `json:"member_count,omitempty"`
+	Members               []ConversationMemberDto `json:"members" gorm:"-"`
+	CreatedAt             time.Time               `json:"created_at"`
+	UpdatedAt             time.Time               `json:"updated_at"`
+	LastMessageID         *string                 `json:"last_message_id"`
+	LastMessageBody       *string                 `json:"last_message_body"`
+	LastMessageType       *string                 `json:"last_message_type"`
+	LastMessageEncrypted  bool                    `json:"last_message_encrypted"`
+	LastMessageAt         *time.Time              `json:"last_message_at"`
+	UnreadMessageCount    int64                   `json:"unread_message_count"`
 }
 
 type ConversationCreationDto struct {
@@ -33,26 +34,34 @@ type ConversationMemberDto struct {
 }
 
 type MessageDto struct {
-	ID               string           `json:"id"`
-	ConversationID   string           `json:"conversation_id"`
-	SenderID         int64            `json:"sender_id"`
-	ClientMessageID  string           `json:"client_message_id"`
-	ReplyToMessageID *string          `json:"reply_to_message_id,omitempty" gorm:"column:reply_to_message_id"`
-	ReplyTo          *MessageReplyDto `json:"reply_to,omitempty" gorm:"-"`
-	ReplyToSenderID  *int64           `json:"-" gorm:"column:reply_to_sender_id"`
-	ReplyToUsername  *string          `json:"-" gorm:"column:reply_to_username"`
-	ReplyToBody      *string          `json:"-" gorm:"column:reply_to_body"`
-	ReplyToType      *string          `json:"-" gorm:"column:reply_to_type"`
-	ReplyToIsDeleted *bool            `json:"-" gorm:"column:reply_to_is_deleted"`
-	Type             string           `json:"type"`
-	Body             string           `json:"body"`
-	EditedAt         *time.Time       `json:"edited_at"`
-	DeletedAt        *time.Time       `json:"deleted_at"`
-	CreatedAt        time.Time        `json:"created_at"`
-	UpdatedAt        time.Time        `json:"updated_at"`
-	DeliveredCount   int64            `json:"delivered_count"`
-	ReadCount        int64            `json:"read_count"`
-	ReceiptStatus    string           `json:"receipt_status,omitempty"`
+	ID                string           `json:"id"`
+	ConversationID    string           `json:"conversation_id"`
+	SenderID          int64            `json:"sender_id"`
+	FromUsername      string           `json:"from_username"`
+	ToUsername        string           `json:"to_username,omitempty"`
+	ClientMessageID   string           `json:"client_message_id"`
+	ReplyToMessageID  *string          `json:"reply_to_message_id,omitempty" gorm:"column:reply_to_message_id"`
+	ReplyTo           *MessageReplyDto `json:"reply_to,omitempty" gorm:"-"`
+	ReplyToSenderID   *int64           `json:"-" gorm:"column:reply_to_sender_id"`
+	ReplyToUsername   *string          `json:"-" gorm:"column:reply_to_username"`
+	ReplyToBody       *string          `json:"-" gorm:"column:reply_to_body"`
+	ReplyToType       *string          `json:"-" gorm:"column:reply_to_type"`
+	ReplyToIsDeleted  *bool            `json:"-" gorm:"column:reply_to_is_deleted"`
+	Type              string           `json:"type"`
+	MessageType       string           `json:"message_type,omitempty" gorm:"-"`
+	Body              *string          `json:"body,omitempty"`
+	Ciphertext        *string          `json:"ciphertext,omitempty"`
+	IV                *string          `json:"iv,omitempty" gorm:"-"`
+	IVBytes           []byte           `json:"-" gorm:"column:iv"`
+	EncryptionVersion *int             `json:"encryption_version,omitempty"`
+	KeyVersion        *int             `json:"key_version,omitempty" gorm:"column:key_version"`
+	EditedAt          *time.Time       `json:"edited_at"`
+	DeletedAt         *time.Time       `json:"deleted_at"`
+	CreatedAt         time.Time        `json:"created_at"`
+	UpdatedAt         time.Time        `json:"updated_at"`
+	DeliveredCount    int64            `json:"delivered_count"`
+	ReadCount         int64            `json:"read_count"`
+	ReceiptStatus     string           `json:"receipt_status,omitempty"`
 }
 
 type MessageReplyDto struct {
@@ -86,4 +95,14 @@ type GroupInvitationDto struct {
 	InviteeID         int64     `json:"invitee_id"`
 	Status            string    `json:"status"`
 	CreatedAt         time.Time `json:"created_at"`
+}
+
+type ConversationGroupKeyDto struct {
+	ConversationID string    `json:"conversation_id"`
+	KeyVersion     int       `json:"key_version"`
+	SenderID       int64     `json:"sender_id"`
+	SenderUsername string    `json:"sender_username"`
+	EncryptedKey   string    `json:"encrypted_key"`
+	IV             string    `json:"iv"`
+	CreatedAt      time.Time `json:"created_at"`
 }

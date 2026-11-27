@@ -68,3 +68,36 @@ func TestMessageDtoMarshalsReceiptStatus(t *testing.T) {
 		t.Fatalf("receipt_status = %v, want read", result["receipt_status"])
 	}
 }
+
+func TestMessageDtoMarshalsKeyVersionAndMessageType(t *testing.T) {
+	keyVersion := 2
+	encVersion := 1
+	ciphertext := "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5eg=="
+	iv := "QUJDREVGR0hJSktM"
+	message, err := json.Marshal(dto.MessageDto{
+		ID:                "123e4567-e89b-12d3-a456-426614174004",
+		Type:              "text",
+		MessageType:       "text",
+		EncryptionVersion: &encVersion,
+		KeyVersion:        &keyVersion,
+		Ciphertext:        &ciphertext,
+		IV:                &iv,
+	})
+	if err != nil {
+		t.Fatalf("marshal message DTO: %v", err)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(message, &result); err != nil {
+		t.Fatalf("unmarshal message DTO: %v", err)
+	}
+	if result["key_version"] != float64(2) {
+		t.Fatalf("key_version = %v, want 2", result["key_version"])
+	}
+	if result["message_type"] != "text" {
+		t.Fatalf("message_type = %v, want text", result["message_type"])
+	}
+	if result["encryption_version"] != float64(1) {
+		t.Fatalf("encryption_version = %v, want 1", result["encryption_version"])
+	}
+}

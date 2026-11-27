@@ -29,7 +29,7 @@ Errors use the same envelope with an error message and an HTTP status code:
 }
 ```
 
-Protected endpoints return `401` if the token is missing, invalid, expired, or revoked. Chat/contact validation errors generally return `400`; authorization errors return `403`; missing resources return `404`; conflicts return `409`; unexpected server failures return `500`.
+Protected endpoints return `401` if the token is missing, invalid, expired, or revoked. Chat/contact validation errors generally return `400`; authorization errors return `403`; missing resources return `404`; conflicts return `409`; oversized encrypted payloads return `413`; message rate limiting returns `429`; unexpected server failures return `500`.
 
 ## Authentication and profile
 
@@ -99,11 +99,14 @@ Send the access token in the `Authorization` header. The profile belongs to the 
     "about": "Hello, I'm Jane.",
     "avatar_url": "https://s3.example/...",
     "avatar_url_expires_in": 900,
+    "public_key": "BGx4...=",
     "created_at": "2026-11-03T10:00:00Z",
     "updated_at": "2026-11-03T10:00:00Z"
   }
 }
 ```
+
+`public_key` is `null` until the user uploads one through `PUT /keys/me`.
 
 ### Update profile — `POST /profile`
 
@@ -219,6 +222,44 @@ The database column `users.avatar_url` stores the private S3 object key, not a p
 
 The profile and download URLs expire after 15 minutes; do not persist them. Refresh an expired URL through the download URL endpoint or by requesting `GET /profile` again. The upload path is saved when the upload URL is issued, so an abandoned or failed S3 upload can leave the database pointing to an object that does not exist until the upload is retried. Unsupported content types return `400`; missing profile/avatar returns `404`; invalid authentication returns `401`.
 
+## Public keys (E2EE)
+
+Direct chat messages are end-to-end encrypted. The backend stores and validates public keys but never receives private keys, plaintext, or session keys.
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `PUT` | `/keys/me` | Access token | Upload or rotate the caller's public key |
+| `GET` | `/users/{user_id}/key` | Access token | Get a user's public key by numeric user ID |
+
+### Upload public key — `PUT /keys/me`
+
+```json
+{
+  "public_key": "<base64 raw P-256 public key>"
+}
+```
+
+The value must be standard (not URL-safe) base64 that decodes to exactly 65 bytes, starts with `0x04`, and is a valid P-256 curve point. Invalid keys return `400` with message `invalid public key`. Success is `204 No Content` with no response body. Re-uploading the identical key is a no-op (still `204`); the key timestamp only moves when the key actually changes. `public_key` in `GET /profile` always matches this endpoint's value for the same user.
+
+### Get public key — `GET /users/{user_id}/key`
+
+`{user_id}` is the numeric user ID (same as `user_id`/`sender_id` in chat payloads). Success:
+
+```json
+{
+  "code": 200,
+  "message": "success",
+  "data": {
+    "public_key": "<base64 raw P-256 public key>",
+    "updated_at": "2026-11-19T07:00:00Z"
+  }
+}
+```
+
+`updated_at` comes from the dedicated key-rotation timestamp: it changes only when the public key really changes and is not shifted by profile updates, avatar changes, logins, or identical re-uploads. Clients can safely compare `message.created_at < key.updated_at` to show "this message was encrypted for another device".
+
+Returns `400` for a non-numeric ID and `404` when the user does not exist or has not uploaded a key. The backend never creates keys on behalf of clients. The legacy `GET /contacts/{user_id}/keys` endpoint still exists. Note that encryption AAD and fingerprints still use canonical usernames, not user IDs.
+
 ## Contacts
 
 All contact endpoints require an access token. Contact requests are sent by the target user's exact phone number. Accept, reject, and remove operations use positive user IDs. Direct conversations are available only while both participants have an accepted contact relationship.
@@ -246,7 +287,8 @@ All endpoints in this section require an access token. UUID path values and mess
 | `GET` | `/conversations` | — | List active conversations |
 | `GET` | `/conversations/{conversation_id}/members` | — | List active members of a group |
 | `GET` | `/conversations/{conversation_id}/messages` | `limit`, `before_id` | Get a message page |
-| `POST` | `/conversations/{conversation_id}/messages` | — | Send a message |
+| `POST` | `/conversations/{conversation_id}/messages` | — | Send a message (direct: encrypted payload; group: legacy body) |
+| `POST` | `/conversations/{conversation_id}/messages/ack` | — | Acknowledge stored ciphertext for received messages |
 | `POST` | `/conversations/{conversation_id}/delivered` | — | Mark messages delivered through a cursor |
 | `POST` | `/conversations/{conversation_id}/read` | — | Mark messages read through a cursor |
 | `PATCH` | `/messages/{message_id}` | — | Edit the caller's message |
@@ -290,7 +332,7 @@ All endpoints in this section require an access token. UUID path values and mess
 
 `GET /conversations`
 
-Returns an array of active conversations. Each item includes its members, last message fields, and `unread_message_count`. Direct conversations are omitted if the contact relationship is no longer accepted.
+Returns an array of active conversations. Each item includes its members, last message fields, and `unread_message_count`. Direct conversations are omitted if the contact relationship is no longer accepted. When the last message is encrypted, `last_message_body` is `null` and `last_message_encrypted` is `true`; clients should render a neutral preview such as "Pesan terenkripsi" (encrypted direct messages expose no plaintext preview).
 
 ### List message history
 
@@ -309,6 +351,8 @@ Response `data`:
       "id": "123e4567-e89b-12d3-a456-426614174001",
       "conversation_id": "123e4567-e89b-12d3-a456-426614174000",
       "sender_id": 7,
+      "from_username": "nadia",
+      "to_username": "raka",
       "client_message_id": "123e4567-e89b-12d3-a456-426614174002",
       "type": "text",
       "body": "Hello",
@@ -336,24 +380,75 @@ Response `data`:
 
 Use `next_before_id` as the next request's `before_id`. It is an empty string when no further page is indicated.
 
+Encrypted direct messages replace `body` with the encrypted payload — `encryption_version: 1`, `ciphertext` (standard base64 of ciphertext+GCM tag), and `iv` (standard base64, decodes to 12 bytes) — and omit `body` entirely:
+
+```json
+{
+  "id": "123e4567-e89b-12d3-a456-426614174009",
+  "conversation_id": "123e4567-e89b-12d3-a456-426614174000",
+  "sender_id": 7,
+  "from_username": "nadia",
+  "to_username": "raka",
+  "client_message_id": "123e4567-e89b-12d3-a456-42661417400a",
+  "type": "text",
+  "encryption_version": 1,
+  "ciphertext": "<base64 ciphertext+tag>",
+  "iv": "<base64 12 bytes>",
+  "created_at": "2026-11-19T07:01:00Z"
+}
+```
+
+`from_username` is resolved from the authenticated sender and `to_username` from the other direct-conversation member (it is empty for group messages). Legacy direct messages without `encryption_version` keep their `body` plaintext and must be rendered as history, not re-encrypted. `reply_to.body` is empty when the replied-to message is encrypted.
+
 ### Send message
 
 `POST /conversations/{conversation_id}/messages`
 
-```json
-{
-  "client_message_id": "123e4567-e89b-12d3-a456-426614174002",
-  "type": "text",
-  "body": "Hello",
-  "reply_to_message_id": "123e4567-e89b-12d3-a456-426614174003"
-}
-```
+Which payload shape is accepted is decided by the stored `conversation.type`, never by a client claim:
 
-`client_message_id` is a required UUID idempotency key. Reuse it for retries of the same message. Reusing the key with different content returns `409`. Although the request schema recognizes `text`, `image`, `video`, and `file`, currently only non-empty `text` messages are implemented; other types are rejected. Media upload/storage is not implemented.
+- **Direct** — encrypted payload is mandatory; `body` must not be sent:
+
+  ```json
+  {
+    "client_message_id": "123e4567-e89b-12d3-a456-426614174002",
+    "type": "text",
+    "encryption_version": 1,
+    "ciphertext": "<base64 ciphertext+tag>",
+    "iv": "<base64 12 bytes>",
+    "reply_to_message_id": "123e4567-e89b-12d3-a456-426614174003"
+  }
+  ```
+
+- **Group** — legacy plaintext format; encryption fields are rejected:
+
+  ```json
+  {
+    "client_message_id": "123e4567-e89b-12d3-a456-426614174002",
+    "type": "text",
+    "body": "Hello",
+    "reply_to_message_id": "123e4567-e89b-12d3-a456-426614174003"
+  }
+  ```
+
+`client_message_id` is a required UUID idempotency key. Reuse it for retries of the same message — retries must resend the exact same `ciphertext` and `iv`. Reusing the key with different content returns `409`. Although the request schema recognizes `text`, `image`, `video`, and `file`, currently only `text` messages are implemented; other types are rejected. Media upload/storage is not implemented.
+
+Direct-message validation: `encryption_version` must be exactly `1`; `ciphertext` is standard base64 decoding to 16–49152 bytes (16 bytes minimum covers the GCM tag; larger returns `413 payload too large`); `iv` is standard base64 decoding to exactly 12 bytes. Sending a non-empty `body` for a direct conversation returns `400` with `direct messages must be encrypted`; sending encryption fields for a group returns `400` with `group conversations do not accept encrypted messages yet`. Message sending is rate limited to 30 messages per 10 seconds per user (`429 rate limited`).
 
 `reply_to_message_id` is optional (omit it or send `null` for a normal message). If provided, it must identify a message in the same conversation; otherwise the API returns `422 Unprocessable Entity`. The response, conversation history, and `message.created` event include a `reply_to` summary with the original message ID, sender ID, username, body, type, and `is_deleted`. A deleted original message remains available as a tombstone with an empty body and `is_deleted: true`.
 
 Success is `201 Created`, with the created message object in `data`.
+
+### Message storage acknowledgment
+
+`POST /conversations/{conversation_id}/messages/ack`
+
+```json
+{
+  "ids": ["123e4567-e89b-12d3-a456-426614174009", "123e4567-e89b-12d3-a456-42661417400a"]
+}
+```
+
+Clients store ciphertext locally (e.g., IndexedDB) and acknowledge after successfully decrypting. `ids` must contain 1–500 UUIDs. The caller must be an active conversation member and may only acknowledge messages they did not send; foreign or unknown IDs are ignored silently. Success is `204 No Content` with no body, and the request is idempotent. Acknowledgment only records ciphertext receipt — it never deletes conversation history and is separate from `delivered`/`read` receipts.
 
 ### Delivery and read receipts
 
@@ -379,7 +474,7 @@ When read status is updated through WebSocket or REST, the server sends a `recei
 }
 ```
 
-The body must not be empty. Only the original sender can edit or delete a message. `DELETE /messages/{message_id}` has no body and soft-deletes the message; its body is cleared and `deleted_at` is set.
+The body must not be empty. Only the original sender can edit or delete a message. Encrypted direct messages (with `encryption_version`) cannot be edited — the API returns `403`; hide the edit action for them in the UI. `DELETE /messages/{message_id}` has no body and soft-deletes the message; its body is cleared, `deleted_at` is set, and for encrypted messages the stored `ciphertext`/`iv`/`encryption_version` are wiped.
 
 ## Group invitations and members
 
@@ -452,7 +547,7 @@ Join a conversation and fetch the newest history page:
 
 `conversation.history` accepts the same `conversation_id`, optional `limit`, and optional `before_id`, but does not join the room. `limit` defaults to 50 and must be 1–100. `conversation.leave` accepts `conversation_id`.
 
-Send message:
+Send message. For a **direct** conversation, send the encrypted payload and no `body`; for a **group**, use the legacy `body` format (encryption fields are rejected). The server picks the rule from the stored conversation type:
 
 ```json
 {
@@ -460,12 +555,15 @@ Send message:
   "conversation_id": "123e4567-e89b-12d3-a456-426614174000",
   "client_message_id": "123e4567-e89b-12d3-a456-426614174002",
   "message_type": "text",
-  "body": "Hello",
-  "reply_to_message_id": "123e4567-e89b-12d3-a456-426614174003"
+  "encryption_version": 1,
+  "ciphertext": "<base64 ciphertext+tag>",
+  "iv": "<base64 12 bytes>"
 }
 ```
 
-`receipt.delivered` and `receipt.read` use `conversation_id` and `through_message_id`. Sending messages and receipts requires having joined that conversation. `message.edit` uses `message_id` and `body`; `message.delete` uses `message_id`.
+The same validations as the REST endpoint apply (`encryption_version` = 1, standard-base64 `ciphertext` of 16–49152 decoded bytes, 12-byte `iv`, rate limit 30 messages/10 s, dedup on `client_message_id` requiring identical ciphertext+IV on retry). Oversized frames are rejected by the 64 KiB frame limit.
+
+`receipt.delivered` and `receipt.read` use `conversation_id` and `through_message_id`. Sending messages and receipts requires having joined that conversation. `message.edit` uses `message_id` and `body`; `message.delete` uses `message_id`. Encrypted messages cannot be edited (`forbidden`).
 
 ### Server events
 
@@ -481,7 +579,9 @@ Events are JSON objects with `type`, optional `conversation_id`, and optional `d
 | `message.deleted` | A message was soft-deleted |
 | `receipt.delivered` | Delivery receipt update |
 | `receipt.read` | Read receipt update, sent to online senders of messages covered by the cursor |
-| `error` | Request failed; `error` contains a message |
+| `error` | Request failed; `error` contains a stable error code |
+
+Error frames carry stable codes: `bad_request`, `invalid_reply`, `forbidden`, `not_found`, `conflict`, `encryption_required` (plaintext body sent to a direct conversation), `group_encryption_unsupported` (encryption fields sent to a group), `invalid_public_key`, `payload_too_large`, and `rate_limited`.
 
 `message.created` is sent to every connected socket for active members of the conversation, including sockets not joined to that room. Message edit/delete and `receipt.delivered` events are sent only to joined subscribers who remain active members. Messages sent through REST also emit `message.created`. These are online WebSocket events, not browser/OS push notifications; offline delivery requires a separate push notification service.
 
