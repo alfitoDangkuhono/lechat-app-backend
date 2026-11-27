@@ -11,9 +11,21 @@ type SendMessageRequest struct {
 	Type              string  `json:"type" binding:"required,oneof=text image video file"`
 	Body              string  `json:"body"`
 	EncryptionVersion *int    `json:"encryption_version"`
+	KeyVersion        *int    `json:"key_version"`
 	Ciphertext        *string `json:"ciphertext"`
 	IV                *string `json:"iv"`
 	ReplyToMessageID  *string `json:"reply_to_message_id"`
+}
+
+type UploadGroupKeysRequest struct {
+	KeyVersion int                  `json:"key_version" binding:"required,min=1"`
+	Keys       []UploadGroupKeyItem `json:"keys" binding:"required,min=1,max=250,dive"`
+}
+
+type UploadGroupKeyItem struct {
+	UserID       uint   `json:"user_id" binding:"required"`
+	EncryptedKey string `json:"encrypted_key" binding:"required"`
+	IV           string `json:"iv" binding:"required"`
 }
 
 type MarkReadRequest struct {

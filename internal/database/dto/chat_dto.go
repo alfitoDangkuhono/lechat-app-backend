@@ -48,11 +48,13 @@ type MessageDto struct {
 	ReplyToType       *string          `json:"-" gorm:"column:reply_to_type"`
 	ReplyToIsDeleted  *bool            `json:"-" gorm:"column:reply_to_is_deleted"`
 	Type              string           `json:"type"`
+	MessageType       string           `json:"message_type,omitempty" gorm:"-"`
 	Body              *string          `json:"body,omitempty"`
 	Ciphertext        *string          `json:"ciphertext,omitempty"`
 	IV                *string          `json:"iv,omitempty" gorm:"-"`
 	IVBytes           []byte           `json:"-" gorm:"column:iv"`
 	EncryptionVersion *int             `json:"encryption_version,omitempty"`
+	KeyVersion        *int             `json:"key_version,omitempty" gorm:"column:key_version"`
 	EditedAt          *time.Time       `json:"edited_at"`
 	DeletedAt         *time.Time       `json:"deleted_at"`
 	CreatedAt         time.Time        `json:"created_at"`
@@ -93,4 +95,14 @@ type GroupInvitationDto struct {
 	InviteeID         int64     `json:"invitee_id"`
 	Status            string    `json:"status"`
 	CreatedAt         time.Time `json:"created_at"`
+}
+
+type ConversationGroupKeyDto struct {
+	ConversationID string    `json:"conversation_id"`
+	KeyVersion     int       `json:"key_version"`
+	SenderID       int64     `json:"sender_id"`
+	SenderUsername string    `json:"sender_username"`
+	EncryptedKey   string    `json:"encrypted_key"`
+	IV             string    `json:"iv"`
+	CreatedAt      time.Time `json:"created_at"`
 }

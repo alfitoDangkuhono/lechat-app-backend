@@ -21,19 +21,24 @@ var uuidPattern = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
 const (
 	gcmNonceSize        = 12
 	maxCiphertextBytes  = 48 * 1024
+	maxGroupKeyBatch    = 250
 	sendMessageWindow   = 10 * time.Second
 	sendMessageMaxBurst = 30
+	groupKeyWindow      = time.Minute
+	groupKeyMaxBurst    = 10
 )
 
 type ChatService struct {
 	chatRepository *repository.ChatRepository
 	sendLimiter    *messageRateLimiter
+	keyLimiter     *messageRateLimiter
 }
 
 func NewChatService(chatRepository *repository.ChatRepository) interfaces.IChat {
 	return &ChatService{
 		chatRepository: chatRepository,
 		sendLimiter:    newMessageRateLimiter(sendMessageWindow, sendMessageMaxBurst),
+		keyLimiter:     newMessageRateLimiter(groupKeyWindow, groupKeyMaxBurst),
 	}
 }
 
@@ -149,7 +154,7 @@ func (s *ChatService) SendMessage(userID uint, conversationID string, req reques
 		return dto.MessageDto{}, constant.ErrChatInvalidRequest
 	}
 	hasBody := strings.TrimSpace(req.Body) != ""
-	hasEncryption := req.EncryptionVersion != nil || req.Ciphertext != nil || req.IV != nil
+	hasEncryption := req.EncryptionVersion != nil || req.Ciphertext != nil || req.IV != nil || req.KeyVersion != nil
 	if !hasBody && !hasEncryption {
 		return dto.MessageDto{}, constant.ErrChatInvalidRequest
 	}
@@ -165,12 +170,16 @@ func (s *ChatService) SendMessage(userID uint, conversationID string, req reques
 
 	switch conversationType {
 	case "direct":
-		if err := validateDirectEncryptedMessage(req, hasBody); err != nil {
+		if err := ValidateDirectEncryptedMessage(req, hasBody); err != nil {
 			return dto.MessageDto{}, err
 		}
 	case "group":
 		if hasEncryption {
-			return dto.MessageDto{}, constant.ErrChatGroupEncrypted
+			if err := ValidateGroupEncryptedMessage(req, hasBody); err != nil {
+				return dto.MessageDto{}, err
+			}
+		} else if !hasBody {
+			return dto.MessageDto{}, constant.ErrChatInvalidRequest
 		}
 	default:
 		return dto.MessageDto{}, constant.ErrChatInvalidRequest
@@ -186,14 +195,51 @@ func (s *ChatService) SendMessage(userID uint, conversationID string, req reques
 // alphabet, dirty trailing bits) so ciphertext/IV round-trip byte-identically.
 var canonicalBase64 = base64.StdEncoding.Strict()
 
-func validateDirectEncryptedMessage(req request.SendMessageRequest, hasBody bool) error {
+// ValidateDirectEncryptedMessage enforces the direct-chat E2EE payload
+// contract: no plaintext body alongside encryption fields, encryption_version
+// must be 1, ciphertext between 16..max bytes, IV exactly 12 bytes, all in
+// canonical standard base64.
+func ValidateDirectEncryptedMessage(req request.SendMessageRequest, hasBody bool) error {
 	if hasBody {
 		return constant.ErrChatEncryptionRequired
+	}
+	if req.KeyVersion != nil {
+		return constant.ErrChatInvalidRequest
 	}
 	if req.EncryptionVersion == nil || *req.EncryptionVersion != 1 ||
 		req.Ciphertext == nil || strings.TrimSpace(*req.Ciphertext) == "" ||
 		req.IV == nil || strings.TrimSpace(*req.IV) == "" {
 		return constant.ErrChatEncryptionRequired
+	}
+	ciphertext, err := canonicalBase64.DecodeString(*req.Ciphertext)
+	if err != nil {
+		return constant.ErrChatInvalidRequest
+	}
+	if len(ciphertext) < 16 || len(ciphertext) > maxCiphertextBytes {
+		if len(ciphertext) > maxCiphertextBytes {
+			return constant.ErrPayloadTooLarge
+		}
+		return constant.ErrChatInvalidRequest
+	}
+	iv, err := canonicalBase64.DecodeString(*req.IV)
+	if err != nil || len(iv) != gcmNonceSize {
+		return constant.ErrChatInvalidRequest
+	}
+	return nil
+}
+
+// ValidateGroupEncryptedMessage enforces the group-chat E2EE payload contract:
+// the same rules as direct plus a required key_version >= 1; the combination of
+// plaintext body and ciphertext is rejected.
+func ValidateGroupEncryptedMessage(req request.SendMessageRequest, hasBody bool) error {
+	if hasBody {
+		return constant.ErrChatInvalidRequest
+	}
+	if req.EncryptionVersion == nil || *req.EncryptionVersion != 1 ||
+		req.KeyVersion == nil || *req.KeyVersion < 1 ||
+		req.Ciphertext == nil || strings.TrimSpace(*req.Ciphertext) == "" ||
+		req.IV == nil || strings.TrimSpace(*req.IV) == "" {
+		return constant.ErrChatInvalidRequest
 	}
 	ciphertext, err := canonicalBase64.DecodeString(*req.Ciphertext)
 	if err != nil {
@@ -270,4 +316,49 @@ func (s *ChatService) RemoveMember(userID uint, conversationID string, memberID 
 
 func (s *ChatService) ActiveMemberIDs(conversationID string) ([]uint, error) {
 	return s.chatRepository.ActiveMemberIDs(conversationID)
+}
+
+func (s *ChatService) UploadGroupKeys(userID uint, conversationID string, req request.UploadGroupKeysRequest) error {
+	if !uuidPattern.MatchString(conversationID) || req.KeyVersion < 1 || len(req.Keys) == 0 {
+		return constant.ErrChatInvalidRequest
+	}
+	if len(req.Keys) > maxGroupKeyBatch {
+		return constant.ErrPayloadTooLarge
+	}
+	if !s.keyLimiter.allow(userID) {
+		return constant.ErrRateLimited
+	}
+
+	seenUsers := make(map[uint]struct{}, len(req.Keys))
+	for _, item := range req.Keys {
+		if item.UserID == 0 || uint64(item.UserID) > math.MaxInt64 {
+			return constant.ErrChatInvalidRequest
+		}
+		if _, seen := seenUsers[item.UserID]; seen {
+			return constant.ErrChatInvalidRequest
+		}
+		seenUsers[item.UserID] = struct{}{}
+
+		encKey, err := canonicalBase64.DecodeString(item.EncryptedKey)
+		if err != nil || len(encKey) != 48 {
+			return constant.ErrChatInvalidRequest
+		}
+
+		iv, err := canonicalBase64.DecodeString(item.IV)
+		if err != nil || len(iv) != gcmNonceSize {
+			return constant.ErrChatInvalidRequest
+		}
+	}
+
+	return s.chatRepository.UploadGroupKeys(userID, conversationID, req)
+}
+
+func (s *ChatService) GetMyGroupKey(userID uint, conversationID string, keyVersion *int) (dto.ConversationGroupKeyDto, error) {
+	if !uuidPattern.MatchString(conversationID) {
+		return dto.ConversationGroupKeyDto{}, constant.ErrChatInvalidRequest
+	}
+	if keyVersion != nil && *keyVersion < 1 {
+		return dto.ConversationGroupKeyDto{}, constant.ErrChatInvalidRequest
+	}
+	return s.chatRepository.GetMyGroupKey(userID, conversationID, keyVersion)
 }

@@ -33,4 +33,5 @@ var (
 	ErrRateLimited            = errors.New("rate limited")
 	ErrChatEncryptionRequired = errors.New("direct messages must be encrypted")
 	ErrChatGroupEncrypted     = errors.New("group conversations do not accept encrypted messages yet")
+	ErrChatKeyVersionConflict = errors.New("group key version must be the current version or the next version")
 )

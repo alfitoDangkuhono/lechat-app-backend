@@ -31,6 +31,8 @@ func Routes(router *gin.Engine, authenticationController *controllers.Authentica
 		authenticated.GET("/conversations/:conversation_id/messages", chatController.ListMessages)
 		authenticated.POST("/conversations/:conversation_id/messages", chatController.SendMessage)
 		authenticated.POST("/conversations/:conversation_id/messages/ack", chatController.AckMessages)
+		authenticated.POST("/conversations/:conversation_id/keys", chatController.UploadGroupKeys)
+		authenticated.GET("/conversations/:conversation_id/keys/me", chatController.GetMyGroupKey)
 		authenticated.POST("/conversations/:conversation_id/delivered", chatController.MarkDelivered)
 		authenticated.POST("/conversations/:conversation_id/read", chatController.MarkRead)
 		authenticated.PATCH("/messages/:message_id", chatController.EditMessage)

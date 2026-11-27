@@ -44,6 +44,7 @@ type realtimeFrame struct {
 	MessageType       string     `json:"message_type,omitempty"`
 	Body              string     `json:"body,omitempty"`
 	EncryptionVersion *int       `json:"encryption_version,omitempty"`
+	KeyVersion        *int       `json:"key_version,omitempty"`
 	Ciphertext        *string    `json:"ciphertext,omitempty"`
 	IV                *string    `json:"iv,omitempty"`
 	ReplyToMessageID  *string    `json:"reply_to_message_id,omitempty"`
@@ -229,6 +230,7 @@ func (c *RealtimeController) handleFrame(client *services.RealtimeClient, userID
 			Type:              frame.MessageType,
 			Body:              frame.Body,
 			EncryptionVersion: frame.EncryptionVersion,
+			KeyVersion:        frame.KeyVersion,
 			Ciphertext:        frame.Ciphertext,
 			IV:                frame.IV,
 			ReplyToMessageID:  frame.ReplyToMessageID,

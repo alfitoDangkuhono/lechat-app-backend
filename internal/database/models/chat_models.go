@@ -46,3 +46,14 @@ type ContactRequestOutcome struct {
 	Status      string `gorm:"column:status"`
 	RequestedBy uint   `gorm:"column:requested_by"`
 }
+
+type ConversationGroupKey struct {
+	ID             int64     `gorm:"column:id;primaryKey"`
+	ConversationID string    `gorm:"column:conversation_id"`
+	KeyVersion     int       `gorm:"column:key_version"`
+	UserID         int64     `gorm:"column:user_id"`
+	SenderID       int64     `gorm:"column:sender_id"`
+	EncryptedKey   string    `gorm:"column:encrypted_key"`
+	IV             string    `gorm:"column:iv"`
+	CreatedAt      time.Time `gorm:"column:created_at"`
+}

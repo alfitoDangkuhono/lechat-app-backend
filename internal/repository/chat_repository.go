@@ -23,13 +23,13 @@ func messageDTOQuery(db *gorm.DB, receiptUserID uint) *gorm.DB {
 		Select(`
 			messages.id, messages.conversation_id, messages.sender_id, messages.client_message_id,
 			messages.reply_to_message_id, messages.type, messages.body, messages.ciphertext,
-			messages.iv, messages.encryption_version, messages.edited_at,
+			messages.iv, messages.encryption_version, messages.key_version, messages.edited_at,
 			messages.deleted_at, messages.created_at, messages.updated_at,
 			sender.username AS from_username,
 			CASE WHEN conversation.type = 'direct' THEN peer.username ELSE '' END AS to_username,
 			reply.sender_id AS reply_to_sender_id,
 			reply_sender.username AS reply_to_username,
-			CASE WHEN reply.deleted_at IS NULL THEN reply.body ELSE '' END AS reply_to_body,
+			CASE WHEN reply.deleted_at IS NULL THEN COALESCE(reply.body, '') ELSE '' END AS reply_to_body,
 			reply.type AS reply_to_type,
 			(reply.deleted_at IS NOT NULL) AS reply_to_is_deleted,
 			(SELECT COUNT(*) FROM messages_receipts WHERE message_id = messages.id AND delivered_at IS NOT NULL) AS delivered_count,
@@ -66,6 +66,7 @@ func finalizeMessage(message *dto.MessageDto) {
 		encoded := base64.StdEncoding.EncodeToString(message.IVBytes)
 		message.IV = &encoded
 	}
+	message.MessageType = message.Type
 	setMessageReply(message)
 }
 
@@ -249,7 +250,7 @@ func (r *ChatRepository) ListConversations(userID uint) ([]dto.ConversationDto, 
 			)
 		 )
 		LEFT JOIN LATERAL (
-			SELECT id, body, type, created_at, (encryption_version IS NOT NULL) AS last_message_encrypted
+			SELECT id, CASE WHEN encryption_version IS NOT NULL THEN NULL ELSE body END AS body, type, created_at, (encryption_version IS NOT NULL) AS last_message_encrypted
 			FROM messages
 			WHERE conversation_id = c.id
 			ORDER BY created_at DESC, id DESC
@@ -386,6 +387,7 @@ func (r *ChatRepository) SendMessage(userID uint, conversationID string, req req
 		iv := decodedIV
 		message.IV = &iv
 		message.Ciphertext = req.Ciphertext
+		message.KeyVersion = req.KeyVersion
 	} else {
 		body := req.Body
 		message.Body = &body
@@ -423,9 +425,20 @@ func sameMessagePayload(existing *dto.MessageDto, req request.SendMessageRequest
 		return existing.EncryptionVersion != nil && *existing.EncryptionVersion == *req.EncryptionVersion &&
 			existing.Ciphertext != nil && *existing.Ciphertext == *req.Ciphertext &&
 			existing.IV != nil && *existing.IV == *req.IV &&
+			sameOptionalInt(existing.KeyVersion, req.KeyVersion) &&
 			existing.Body == nil
 	}
 	return existing.Body != nil && *existing.Body == req.Body && existing.Ciphertext == nil
+}
+
+func sameOptionalInt(a, b *int) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return *a == *b
 }
 
 func (r *ChatRepository) AckMessages(userID uint, conversationID string, req request.AckMessagesRequest) error {
@@ -599,6 +612,7 @@ func (r *ChatRepository) DeleteMessage(userID uint, messageID string) (dto.Messa
 			"ciphertext":         nil,
 			"iv":                 nil,
 			"encryption_version": nil,
+			"key_version":        nil,
 			"deleted_at":         gorm.Expr("CURRENT_TIMESTAMP"),
 		})
 	if result.Error != nil {
@@ -957,4 +971,136 @@ func (r *ChatRepository) ActiveMemberIDs(conversationID string) ([]uint, error) 
 		`, conversationID).
 		Find(&memberIDs).Error
 	return memberIDs, err
+}
+
+func (r *ChatRepository) UploadGroupKeys(userID uint, conversationID string, req request.UploadGroupKeysRequest) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var conv models.ConversationRole
+		err := tx.Table("conversations").Select("type").Where("id = ?", conversationID).Take(&conv).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return gorm.ErrRecordNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if conv.Type != "group" {
+			return constant.ErrChatInvalidRequest
+		}
+
+		var memberRole string
+		err = tx.Table("conversations_members").
+			Select("role").
+			Where("conversation_id = ? AND user_id = ? AND left_at IS NULL", conversationID, userID).
+			Take(&memberRole).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return constant.ErrChatForbidden
+		}
+		if err != nil {
+			return err
+		}
+
+		// Rotation may only advance the epoch by one so a member cannot poison
+		// the group with an arbitrary future key_version (GET /keys/me serves
+		// the highest version). Overwriting the current version stays allowed
+		// because re-wrapping for a new member reuses the same epoch.
+		var currentMaxVersion int
+		err = tx.Table("conversation_group_keys").
+			Select("COALESCE(MAX(key_version), 0)").
+			Where("conversation_id = ?", conversationID).
+			Scan(&currentMaxVersion).Error
+		if err != nil {
+			return err
+		}
+		if req.KeyVersion > currentMaxVersion+1 {
+			return constant.ErrChatKeyVersionConflict
+		}
+
+		userIDs := make([]uint, len(req.Keys))
+		for i, key := range req.Keys {
+			userIDs[i] = key.UserID
+		}
+
+		var activeCount int64
+		err = tx.Table("conversations_members").
+			Where("conversation_id = ? AND user_id IN ? AND left_at IS NULL", conversationID, userIDs).
+			Count(&activeCount).Error
+		if err != nil {
+			return err
+		}
+		if activeCount != int64(len(userIDs)) {
+			return constant.ErrChatInvalidRequest
+		}
+
+		for _, item := range req.Keys {
+			err := tx.Exec(`
+				INSERT INTO conversation_group_keys (
+					conversation_id, key_version, user_id, sender_id, encrypted_key, iv, created_at
+				) VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+				ON CONFLICT (conversation_id, key_version, user_id)
+				DO UPDATE SET
+					sender_id = EXCLUDED.sender_id,
+					encrypted_key = EXCLUDED.encrypted_key,
+					iv = EXCLUDED.iv,
+					created_at = CURRENT_TIMESTAMP
+			`, conversationID, req.KeyVersion, item.UserID, userID, item.EncryptedKey, item.IV).Error
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (r *ChatRepository) GetMyGroupKey(userID uint, conversationID string, keyVersion *int) (dto.ConversationGroupKeyDto, error) {
+	var conv models.ConversationRole
+	err := r.db.Table("conversations").Select("type").Where("id = ?", conversationID).Take(&conv).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return dto.ConversationGroupKeyDto{}, gorm.ErrRecordNotFound
+	}
+	if err != nil {
+		return dto.ConversationGroupKeyDto{}, err
+	}
+	if conv.Type != "group" {
+		return dto.ConversationGroupKeyDto{}, constant.ErrChatInvalidRequest
+	}
+
+	var memberRole string
+	err = r.db.Table("conversations_members").
+		Select("role").
+		Where("conversation_id = ? AND user_id = ? AND left_at IS NULL", conversationID, userID).
+		Take(&memberRole).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return dto.ConversationGroupKeyDto{}, constant.ErrChatForbidden
+	}
+	if err != nil {
+		return dto.ConversationGroupKeyDto{}, err
+	}
+
+	query := r.db.Table("conversation_group_keys AS k").
+		Select(`
+			k.conversation_id,
+			k.key_version,
+			k.sender_id,
+			COALESCE(u.username, '') AS sender_username,
+			k.encrypted_key,
+			k.iv,
+			k.created_at
+		`).
+		Joins("LEFT JOIN users AS u ON u.id = k.sender_id").
+		Where("k.conversation_id = ? AND k.user_id = ?", conversationID, userID)
+
+	if keyVersion != nil {
+		query = query.Where("k.key_version = ?", *keyVersion)
+	}
+	query = query.Order("k.key_version DESC").Limit(1)
+
+	var result dto.ConversationGroupKeyDto
+	err = query.Take(&result).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return dto.ConversationGroupKeyDto{}, gorm.ErrRecordNotFound
+	}
+	if err != nil {
+		return dto.ConversationGroupKeyDto{}, err
+	}
+	return result, nil
 }

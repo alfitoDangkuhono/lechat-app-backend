@@ -37,6 +37,7 @@ type Message struct {
 	Ciphertext        *string    `gorm:"column:ciphertext"`
 	IV                *[]byte    `gorm:"column:iv"`
 	EncryptionVersion *int       `gorm:"column:encryption_version"`
+	KeyVersion        *int       `gorm:"column:key_version"`
 	EditedAt          *time.Time `gorm:"column:edited_at"`
 	DeletedAt         *time.Time `gorm:"column:deleted_at"`
 	CreatedAt         time.Time  `gorm:"column:created_at;autoCreateTime"`
